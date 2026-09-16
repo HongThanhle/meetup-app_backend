@@ -6,6 +6,6 @@ const PORT = process.env.PORT || 5000;
 
 connectDB().then(() => {
   app.listen(PORT, () => {
-    console.log(`🚀 Server đang chạy ở port ${PORT}`);
+    console.log(` Server đang chạy ở port ${PORT}`);
   });
 });

@@ -28,6 +28,7 @@ async function register(req, res) {
       user: { id: user._id, name: user.name, email: user.email },
     });
   } catch (err) {
+    console.error('Lỗi đăng ký:', err);
     res.status(500).json({ error: 'Lỗi server khi đăng ký' });
   }
 }
@@ -52,6 +53,7 @@ async function login(req, res) {
       user: { id: user._id, name: user.name, email: user.email },
     });
   } catch (err) {
+    console.error('Lỗi đăng nhập:', err);
     res.status(500).json({ error: 'Lỗi server khi đăng nhập' });
   }
 }

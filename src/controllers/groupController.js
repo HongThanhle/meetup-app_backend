@@ -43,6 +43,7 @@ async function createGroup(req, res) {
       inviteCode: group.inviteCode,
     });
   } catch (err) {
+    console.error('Lỗi tạo nhóm:', err);
     res.status(500).json({ error: 'Lỗi server khi tạo nhóm' });
   }
 }
@@ -68,6 +69,7 @@ async function joinGroup(req, res) {
 
     res.json({ groupId: group._id, groupName: group.groupName });
   } catch (err) {
+    console.error('Lỗi tham gia nhóm:', err);
     res.status(500).json({ error: 'Lỗi server khi tham gia nhóm' });
   }
 }
@@ -92,6 +94,7 @@ async function getGroupStatus(req, res) {
 
     res.json({ groupName: group.groupName, members });
   } catch (err) {
+    console.error('Lỗi lấy trạng thái nhóm:', err);
     res.status(500).json({ error: 'Lỗi server khi lấy trạng thái nhóm' });
   }
 }
