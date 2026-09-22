@@ -31,12 +31,10 @@ async function reverseGeocodeAddress(req, res) {
     if (lat === undefined || lng === undefined) {
       return res.status(400).json({ error: 'Thiếu tọa độ' });
     }
-
     const address = await reverseGeocode(lat, lng);
     if (!address) {
       return res.status(404).json({ error: 'Không tìm được địa chỉ cho tọa độ này' });
     }
-
     res.json({ address });
   } catch (err) {
     console.error('Lỗi reverse geocode:', err);

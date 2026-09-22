@@ -4,6 +4,8 @@ const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 const geocodeRoutes = require('./routes/geocodeRoutes');
+const reverseGeocodeRoutes = require('./routes/reverseGeocodeRoutes');
+
 
 const app = express();
 
@@ -17,5 +19,6 @@ app.get('/', (req, res) => {
 app.use('/auth', authRoutes);
 app.use('/groups', groupRoutes);
 app.use('/geocode-preview', geocodeRoutes);
+app.use('/reverse-geocode', reverseGeocodeRoutes);
 
 module.exports = app;

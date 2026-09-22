@@ -33,7 +33,6 @@ async function reverseGeocode(lat, lng) {
     params: { lat, lon: lng, format: 'json' },
     headers: HEADERS,
   });
-
   return response.data?.display_name || null;
 }
 
