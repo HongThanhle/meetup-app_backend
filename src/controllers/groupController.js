@@ -1,6 +1,7 @@
 const Group = require('../models/Group');
 const Location = require('../models/Location');
 const User = require('../models/User');
+const { isNonEmptyString } = require('../middleware/validation');
 
 // Sinh mã mời ngẫu nhiên 6 ký tự, chỉ chữ hoa + số, tránh ký tự dễ nhầm (0/O, 1/I)
 function generateInviteCode() {
@@ -15,11 +16,14 @@ function generateInviteCode() {
 async function createGroup(req, res) {
   try {
     const { groupName } = req.body;
-    if (!groupName) {
-      return res.status(400).json({ error: 'Thiếu tên nhóm' });
+    if (!isNonEmptyString(groupName, 100)) {
+      return res.status(400).json({ error: 'Tên nhóm không hợp lệ' });
     }
 
     const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Tài khoản không tồn tại' });
+    }
 
     // Đảm bảo mã mời không trùng — thử lại nếu trùng (hiếm khi xảy ra)
     let inviteCode;
@@ -31,7 +35,7 @@ async function createGroup(req, res) {
     }
 
     const group = await Group.create({
-      groupName,
+      groupName: groupName.trim(),
       inviteCode,
       createdBy: req.userId,
       members: [{ userId: req.userId, name: user.name }],
@@ -51,18 +55,26 @@ async function createGroup(req, res) {
 async function joinGroup(req, res) {
   try {
     const { inviteCode } = req.body;
-    if (!inviteCode) {
-      return res.status(400).json({ error: 'Thiếu mã mời' });
+    if (!isNonEmptyString(inviteCode, 6)) {
+      return res.status(400).json({ error: 'Mã mời không hợp lệ' });
     }
 
-    const group = await Group.findOne({ inviteCode: inviteCode.toUpperCase() });
+    const normalizedInviteCode = inviteCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(normalizedInviteCode)) {
+      return res.status(400).json({ error: 'Mã mời không hợp lệ' });
+    }
+
+    const group = await Group.findOne({ inviteCode: normalizedInviteCode });
     if (!group) {
       return res.status(404).json({ error: 'Mã mời không đúng hoặc không tồn tại' });
     }
 
-    const alreadyMember = group.members.some((m) => m.userId.toString() === req.userId);
+    const alreadyMember = group.members.some((m) => m.userId && m.userId.toString() === req.userId);
     if (!alreadyMember) {
       const user = await User.findById(req.userId);
+      if (!user) {
+        return res.status(401).json({ error: 'Tài khoản không tồn tại' });
+      }
       group.members.push({ userId: req.userId, name: user.name });
       await group.save();
     }
@@ -77,10 +89,7 @@ async function joinGroup(req, res) {
 async function getGroupStatus(req, res) {
   try {
     const { groupId } = req.params;
-    const group = await Group.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ error: 'Không tìm thấy nhóm' });
-    }
+    const group = req.group;
 
     // Lấy danh sách userId đã gửi vị trí trong nhóm này
     const locations = await Location.find({ groupId }).select('userId');
@@ -118,10 +127,7 @@ async function getMyGroups(req, res) {
 async function leaveGroup(req, res) {
   try {
     const { groupId } = req.params;
-    const group = await Group.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ error: 'Không tìm thấy nhóm' });
-    }
+    const group = req.group;
     group.members = group.members.filter((m) => m.userId.toString() !== req.userId);
     await group.save();
     await Location.deleteOne({ groupId, userId: req.userId });

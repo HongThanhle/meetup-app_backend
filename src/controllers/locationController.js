@@ -3,13 +3,14 @@ const Group = require('../models/Group');
 const { geocode, reverseGeocode } = require('../services/geocodeService');
 const { findCafesNearby } = require('../services/placesService');
 const { calculateCentroid, haversineDistance } = require('../services/geoAlgorithm');
+const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
 
 // Bước 1 (nhập tay): chỉ geocode để preview, CHƯA lưu DB
 async function geocodePreview(req, res) {
   try {
     const { address } = req.body;
-    if (!address) {
-      return res.status(400).json({ error: 'Thiếu địa chỉ' });
+    if (!isNonEmptyString(address, 500)) {
+      return res.status(400).json({ error: 'Địa chỉ không hợp lệ' });
     }
 
     const result = await geocode(address);
@@ -28,8 +29,8 @@ async function geocodePreview(req, res) {
 async function reverseGeocodeAddress(req, res) {
   try {
     const { lat, lng } = req.body;
-    if (lat === undefined || lng === undefined) {
-      return res.status(400).json({ error: 'Thiếu tọa độ' });
+    if (!isValidCoordinate(lat, -90, 90) || !isValidCoordinate(lng, -180, 180)) {
+      return res.status(400).json({ error: 'Tọa độ không hợp lệ' });
     }
     const address = await reverseGeocode(lat, lng);
     if (!address) {
@@ -48,19 +49,18 @@ async function submitLocation(req, res) {
     const { groupId } = req.params;
     const { source, lat, lng, address } = req.body;
 
-    if (!source || lat === undefined || lng === undefined) {
-      return res.status(400).json({ error: 'Thiếu thông tin vị trí' });
+    if (!['gps', 'manual'].includes(source) || !isValidCoordinate(lat, -90, 90) || !isValidCoordinate(lng, -180, 180)) {
+      return res.status(400).json({ error: 'Thông tin vị trí không hợp lệ' });
     }
 
-    const group = await Group.findById(groupId);
-    if (!group) {
-      return res.status(404).json({ error: 'Không tìm thấy nhóm' });
+    if (source === 'manual' && !isNonEmptyString(address, 500)) {
+      return res.status(400).json({ error: 'Địa chỉ không hợp lệ' });
     }
 
     // upsert: nếu user đã gửi vị trí trước đó trong nhóm này, ghi đè thay vì tạo mới
     const location = await Location.findOneAndUpdate(
       { groupId, userId: req.userId },
-      { lat, lng, source, rawAddress: source === 'manual' ? address : null },
+      { lat, lng, source, rawAddress: source === 'manual' ? address.trim() : null },
       { new: true, upsert: true }
     );
 
@@ -75,7 +75,6 @@ async function submitLocation(req, res) {
 async function getSuggestions(req, res) {
   try {
     const { groupId } = req.params;
-
     const locations = await Location.find({ groupId });
     if (locations.length === 0) {
       return res.status(400).json({ error: 'Chưa có ai gửi vị trí trong nhóm này' });
