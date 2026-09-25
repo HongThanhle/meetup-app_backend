@@ -99,4 +99,38 @@ async function getGroupStatus(req, res) {
   }
 }
 
-module.exports = { createGroup, joinGroup, getGroupStatus };
+async function getMyGroups(req, res) {
+  try {
+    const groups = await Group.find({ 'members.userId': req.userId }).sort({ createdAt: -1 });
+    const result = groups.map((g) => ({
+      groupId: g._id,
+      groupName: g.groupName,
+      inviteCode: g.inviteCode,
+      memberCount: g.members.length,
+    }));
+    res.json({ groups: result });
+  } catch (err) {
+    console.error('Lỗi lấy danh sách nhóm:', err);
+    res.status(500).json({ error: 'Lỗi server khi lấy danh sách nhóm' });
+  }
+}
+
+async function leaveGroup(req, res) {
+  try {
+    const { groupId } = req.params;
+    const group = await Group.findById(groupId);
+    if (!group) {
+      return res.status(404).json({ error: 'Không tìm thấy nhóm' });
+    }
+    group.members = group.members.filter((m) => m.userId.toString() !== req.userId);
+    await group.save();
+    await Location.deleteOne({ groupId, userId: req.userId });
+    res.json({ message: 'Đã rời nhóm' });
+  } catch (err) {
+    console.error('Lỗi rời nhóm:', err);
+    res.status(500).json({ error: 'Lỗi server khi rời nhóm' });
+  }
+}
+
+module.exports = { createGroup, joinGroup, getGroupStatus, getMyGroups, leaveGroup };
+
