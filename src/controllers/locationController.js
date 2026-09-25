@@ -95,6 +95,11 @@ async function getSuggestions(req, res) {
     res.json({ centroid, suggestions: ranked });
   } catch (err) {
     console.error('Lỗi tính gợi ý:', err);
+    if (err.code === 'PLACES_UNAVAILABLE') {
+      return res.status(503).json({
+        error: 'Dịch vụ tìm địa điểm đang tạm thời không khả dụng. Vui lòng thử lại sau.',
+      });
+    }
     res.status(500).json({ error: 'Lỗi server khi tính gợi ý' });
   }
 }
