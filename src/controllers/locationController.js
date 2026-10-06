@@ -2,6 +2,7 @@ const Location = require('../models/Location');
 const Group = require('../models/Group');
 const { geocode, reverseGeocode } = require('../services/geocodeService');
 const { findCafesNearby } = require('../services/placesService');
+const { getDrivingRoute } = require('../services/routingService');
 const { calculateCentroid, haversineDistance } = require('../services/geoAlgorithm');
 const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
 
@@ -114,4 +115,38 @@ async function getSuggestions(req, res) {
   }
 }
 
-module.exports = { geocodePreview, reverseGeocodeAddress, submitLocation, getSuggestions };
+async function getRouteToSuggestion(req, res) {
+  try {
+    const { groupId } = req.params;
+    const { lat, lng } = req.body;
+    if (!isValidCoordinate(lat, -90, 90) || !isValidCoordinate(lng, -180, 180)) {
+      return res.status(400).json({ error: 'Tọa độ điểm đến không hợp lệ' });
+    }
+
+    const viewerLocation = await Location.findOne({ groupId, userId: req.userId });
+    if (!viewerLocation) {
+      return res.status(404).json({ error: 'Bạn chưa gửi vị trí trong nhóm này' });
+    }
+
+    const route = await getDrivingRoute(
+      { lat: viewerLocation.lat, lng: viewerLocation.lng },
+      { lat, lng }
+    );
+    if (!route) {
+      return res.status(404).json({ error: 'Không tìm được đường đi tới địa điểm này' });
+    }
+
+    res.json(route);
+  } catch (err) {
+    console.error('Lỗi tìm đường tới địa điểm:', err.message);
+    res.status(502).json({ error: 'Dịch vụ tìm đường tạm thời không khả dụng' });
+  }
+}
+
+module.exports = {
+  geocodePreview,
+  reverseGeocodeAddress,
+  submitLocation,
+  getSuggestions,
+  getRouteToSuggestion,
+};
