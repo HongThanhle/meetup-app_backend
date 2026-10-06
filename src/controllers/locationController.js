@@ -92,7 +92,17 @@ async function getSuggestions(req, res) {
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 15); // giới hạn top 15 kết quả gần nhất
 
-    res.json({ centroid, suggestions: ranked });
+    const viewerLocation = locations.find(
+      (location) => location.userId.toString() === req.userId
+    );
+
+    res.json({
+      centroid,
+      viewerLocation: viewerLocation
+        ? { lat: viewerLocation.lat, lng: viewerLocation.lng }
+        : null,
+      suggestions: ranked,
+    });
   } catch (err) {
     console.error('Lỗi tính gợi ý:', err);
     if (err.code === 'PLACES_UNAVAILABLE') {
