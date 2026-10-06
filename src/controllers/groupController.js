@@ -1,6 +1,7 @@
 const Group = require('../models/Group');
 const Location = require('../models/Location');
 const User = require('../models/User');
+const Vote = require('../models/Vote');
 const { isNonEmptyString } = require('../middleware/validation');
 
 // Sinh mã mời ngẫu nhiên 6 ký tự, chỉ chữ hoa + số, tránh ký tự dễ nhầm (0/O, 1/I)
@@ -131,6 +132,7 @@ async function leaveGroup(req, res) {
     group.members = group.members.filter((m) => m.userId.toString() !== req.userId);
     await group.save();
     await Location.deleteOne({ groupId, userId: req.userId });
+    await Vote.deleteOne({ groupId, userId: req.userId });
     res.json({ message: 'Đã rời nhóm' });
   } catch (err) {
     console.error('Lỗi rời nhóm:', err);

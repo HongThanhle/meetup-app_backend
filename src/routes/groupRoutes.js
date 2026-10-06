@@ -8,6 +8,11 @@ const {
   getSuggestions,
   getRouteToSuggestion,
 } = require('../controllers/locationController');
+const {
+  castVote,
+  getVoteResults,
+  finalizeManually,
+} = require('../controllers/voteController');
 
 router.use(verifyToken);
 
@@ -19,5 +24,10 @@ router.post('/:groupId/leave', requireGroupMember, leaveGroup);
 router.post('/:groupId/location', requireGroupMember, submitLocation);
 router.get('/:groupId/suggest', requireGroupMember, getSuggestions);
 router.post('/:groupId/route', requireGroupMember, getRouteToSuggestion);
+
+// --- Vote ---
+router.post('/:groupId/vote', requireGroupMember, castVote);
+router.get('/:groupId/vote-results', requireGroupMember, getVoteResults);
+router.post('/:groupId/finalize', requireGroupMember, finalizeManually);
 
 module.exports = router;
