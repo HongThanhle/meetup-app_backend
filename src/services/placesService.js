@@ -1,102 +1,50 @@
 const axios = require('axios');
 
-const DEFAULT_OVERPASS_ENDPOINTS = [
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-  'https://overpass.openstreetmap.ru/api/interpreter',
-  'https://overpass-api.de/api/interpreter', // để cuối cùng
-];
-
-const REQUEST_TIMEOUT_MS = 10000;
-const NOMINATIM_URL = process.env.NOMINATIM_URL || 'https://nominatim.openstreetmap.org/search';
-const NOMINATIM_HEADERS = {
-  'User-Agent': 'MeetupApp/1.0 (student project)',
-};
-
-function getOverpassEndpoints() {
-  const configuredEndpoint = process.env.OVERPASS_URL?.trim();
-  return configuredEndpoint
-    ? [configuredEndpoint, ...DEFAULT_OVERPASS_ENDPOINTS.filter((url) => url !== configuredEndpoint)]
-    : DEFAULT_OVERPASS_ENDPOINTS;
-}
-
-function getBoundingBox(lat, lng, radiusMeters) {
-  const latDelta = radiusMeters / 111320;
-  const lngDelta = radiusMeters / (111320 * Math.cos((lat * Math.PI) / 180));
-
-  return [lng + lngDelta, lat + latDelta, lng - lngDelta, lat - latDelta].join(',');
-}
-
-async function findCafesWithNominatim(lat, lng, radiusMeters) {
-  const response = await axios.get(NOMINATIM_URL, {
-    params: {
-      q: 'cafe',
-      format: 'jsonv2',
-      limit: 50,
-      bounded: 1,
-      viewbox: getBoundingBox(lat, lng, radiusMeters),
-    },
-    headers: NOMINATIM_HEADERS,
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-
-  return (response.data || [])
-    .map((place) => ({
-      id: `nominatim-${place.osm_type}-${place.osm_id}`,
-      name: place.display_name?.split(',')[0] || 'Không rõ tên',
-      lat: Number(place.lat),
-      lng: Number(place.lon),
-    }))
-    .filter((place) => Number.isFinite(place.lat) && Number.isFinite(place.lng));
-}
+const GEOAPIFY_BASE = 'https://api.geoapify.com/v2/places';
+const REQUEST_TIMEOUT_MS = 15000;
 
 async function findCafesNearby(lat, lng, radiusMeters = 1500) {
-  const query = `
-    [out:json][timeout:10];
-    (
-      node["amenity"="cafe"](around:${radiusMeters},${lat},${lng});
-      node["amenity"="restaurant"](around:${radiusMeters},${lat},${lng});
-    );
-    out body;
-  `;
-
-  let lastError;
-
-  for (const url of getOverpassEndpoints()) {
-    try {
-      const response = await axios.post(url, query, {
-        headers: { 'Content-Type': 'text/plain' },
-        timeout: REQUEST_TIMEOUT_MS,
-      });
-
-      // Thành công → map dữ liệu
-      return (response.data.elements || []).map((place) => ({
-        id: place.id,
-        name: place.tags?.name || 'Không rõ tên',
-        lat: place.lat,
-        lng: place.lon,
-      }));
-    } catch (err) {
-      lastError = err;
-      console.warn(`Overpass failed on ${url}:`, err.message);
-      // thử endpoint tiếp theo
-    }
+  const apiKey = process.env.GEOAPIFY_API_KEY;
+  if (!apiKey) {
+    const error = new Error('Thiếu GEOAPIFY_API_KEY trong biến môi trường');
+    error.code = 'PLACES_UNAVAILABLE';
+    throw error;
   }
 
   try {
-    console.warn('Overpass unavailable, trying Nominatim fallback');
-    return await findCafesWithNominatim(lat, lng, radiusMeters);
-  } catch (err) {
-    lastError = err;
-    console.warn('Nominatim fallback failed:', err.message);
-  }
+    const response = await axios.get(GEOAPIFY_BASE, {
+      params: {
+        categories: 'catering.cafe,catering.restaurant',
+        filter: `circle:${lng},${lat},${radiusMeters}`,
+        limit: 20,
+        apiKey,
+      },
+      timeout: REQUEST_TIMEOUT_MS,
+    });
 
-  // Tất cả endpoint đều fail
-  const error = new Error(
-    `Không thể lấy địa điểm từ Overpass hoặc Nominatim. Lỗi cuối: ${lastError?.message || 'Unknown'}`
-  );
-  error.code = 'PLACES_UNAVAILABLE';
-  throw error;
+    const features = response.data.features || [];
+
+    return features.map((f) => {
+      const props = f.properties;
+      const isCafe = (props.categories || []).some((c) => c.includes('cafe'));
+
+      return {
+        id: String(props.place_id),
+        name: props.name || 'Không rõ tên',
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        address: props.formatted || null,
+        type: isCafe ? 'Quán cà phê' : 'Nhà hàng',
+        website: props.website || null,
+        phone: props.contact?.phone || null,
+      };
+    });
+  } catch (err) {
+    console.error('Geoapify lỗi:', err.message);
+    const error = new Error(`Không thể lấy địa điểm từ Geoapify: ${err.message}`);
+    error.code = 'PLACES_UNAVAILABLE';
+    throw error;
+  }
 }
 
 module.exports = { findCafesNearby };
