@@ -103,7 +103,11 @@ async function getGroupStatus(req, res) {
       hasSubmitted: submittedIds.has(m.userId.toString()),
     }));
 
-    res.json({ groupName: group.groupName, members });
+    res.json({
+      groupName: group.groupName,
+      members,
+      finalizedPlace: group.finalizedPlace?.placeId ? group.finalizedPlace : null,
+    });
   } catch (err) {
     console.error('Lỗi lấy trạng thái nhóm:', err);
     res.status(500).json({ error: 'Lỗi server khi lấy trạng thái nhóm' });
