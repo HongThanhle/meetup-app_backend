@@ -1,5 +1,6 @@
 const Vote = require('../models/Vote');
 const Group = require('../models/Group');
+const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
 
 // Bình chọn / đổi vote
 async function castVote(req, res) {
@@ -8,7 +9,12 @@ async function castVote(req, res) {
     const { placeId, placeName, lat, lng } = req.body;
     const userId = req.userId;
 
-    if (!placeId || !placeName || lat == null || lng == null) {
+    if (
+      !isNonEmptyString(placeId, 200)
+      || !isNonEmptyString(placeName, 200)
+      || !isValidCoordinate(lat, -90, 90)
+      || !isValidCoordinate(lng, -180, 180)
+    ) {
       return res.status(400).json({ error: 'Thiếu thông tin địa điểm để bình chọn' });
     }
 
@@ -18,13 +24,18 @@ async function castVote(req, res) {
       return res.status(400).json({ error: 'Nhóm đã chốt điểm hẹn, không thể đổi vote' });
     }
 
-    await Vote.findOneAndUpdate(
-      { groupId, userId },
-      { placeId, placeName, lat, lng },
-      { upsert: true, new: true }
-    );
+    const currentVote = await Vote.findOne({ groupId, userId });
+    if (currentVote?.placeId === placeId) {
+      await Vote.deleteOne({ _id: currentVote._id });
+    } else {
+      await Vote.findOneAndUpdate(
+        { groupId, userId },
+        { placeId, placeName, lat, lng },
+        { upsert: true, new: true }
+      );
+    }
 
-    const result = await getTallyAndMaybeFinalize(groupId);
+    const result = await getVoteTally(group, userId);
     res.json(result);
   } catch (err) {
     console.error('Lỗi khi bình chọn:', err);
@@ -36,7 +47,7 @@ async function castVote(req, res) {
 async function getVoteResults(req, res) {
   try {
     const { groupId } = req.params;
-    const result = await getTallyAndMaybeFinalize(groupId);
+    const result = await getVoteTally(req.group, req.userId);
     res.json(result);
   } catch (err) {
     console.error('Lỗi khi lấy kết quả vote:', err);
@@ -55,8 +66,26 @@ async function finalizeManually(req, res) {
     if (String(group.createdBy) !== String(req.userId)) {
       return res.status(403).json({ error: 'Chỉ người tạo nhóm mới có thể chốt điểm hẹn' });
     }
+    if (group.finalizedPlace?.placeId) {
+      return res.status(409).json({ error: 'Nhóm đã chốt điểm hẹn' });
+    }
+    if (
+      !isNonEmptyString(placeId, 200)
+      || !isNonEmptyString(placeName, 200)
+      || !isValidCoordinate(lat, -90, 90)
+      || !isValidCoordinate(lng, -180, 180)
+      || (address != null && (typeof address !== 'string' || address.length > 500))
+    ) {
+      return res.status(400).json({ error: 'Thông tin điểm hẹn không hợp lệ' });
+    }
 
-    group.finalizedPlace = { placeId, name: placeName, lat, lng, address };
+    group.finalizedPlace = {
+      placeId,
+      name: placeName.trim(),
+      lat,
+      lng,
+      address: address?.trim() || undefined,
+    };
     group.finalizedAt = new Date();
     await group.save();
 
@@ -67,10 +96,9 @@ async function finalizeManually(req, res) {
   }
 }
 
-// ---- Hàm phụ: tính tally + tự động chốt nếu đủ điều kiện ----
-async function getTallyAndMaybeFinalize(groupId) {
-  const group = await Group.findById(groupId);
-  const votes = await Vote.find({ groupId });
+// ---- Hàm phụ: tính kết quả vote; việc chốt điểm hẹn do trưởng nhóm quyết định ----
+async function getVoteTally(group, viewerId) {
+  const votes = await Vote.find({ groupId: group._id });
 
   const totalMembers = group.members.length;
   const totalVotes = votes.length;
@@ -93,26 +121,12 @@ async function getTallyAndMaybeFinalize(groupId) {
 
   const tally = Object.values(tallyMap).sort((a, b) => b.count - a.count);
 
-  // Tự động chốt khi mọi người đã vote và chưa chốt trước đó
-  if (!group.finalizedPlace?.placeId && totalMembers >= totalMembers && totalVotes >= totalMembers) {
-    const winner = tally[0];
-    if (winner) {
-      group.finalizedPlace = {
-        placeId: winner.placeId,
-        name: winner.placeName,
-        lat: winner.lat,
-        lng: winner.lng,
-      };
-      group.finalizedAt = new Date();
-      await group.save();
-    }
-  }
-
   return {
     totalMembers,
     totalVotes,
     tally,
     finalizedPlace: group.finalizedPlace?.placeId ? group.finalizedPlace : null,
+    canFinalize: String(group.createdBy) === String(viewerId),
   };
 }
 
