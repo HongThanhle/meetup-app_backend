@@ -99,6 +99,9 @@ async function finalizeManually(req, res) {
 // ---- Hàm phụ: tính kết quả vote; việc chốt điểm hẹn do trưởng nhóm quyết định ----
 async function getVoteTally(group, viewerId) {
   const votes = await Vote.find({ groupId: group._id });
+  const memberNames = new Map(
+    group.members.map((member) => [String(member.userId), member.name])
+  );
 
   const totalMembers = group.members.length;
   const totalVotes = votes.length;
@@ -113,10 +116,15 @@ async function getVoteTally(group, viewerId) {
         lng: v.lng,
         count: 0,
         voterIds: [],
+        voterNames: [],
       };
     }
     tallyMap[v.placeId].count += 1;
     tallyMap[v.placeId].voterIds.push(String(v.userId));
+    const voterName = memberNames.get(String(v.userId));
+    if (voterName) {
+      tallyMap[v.placeId].voterNames.push(voterName);
+    }
   });
 
   const tally = Object.values(tallyMap).sort((a, b) => b.count - a.count);
