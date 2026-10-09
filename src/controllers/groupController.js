@@ -99,6 +99,7 @@ async function getGroupStatus(req, res) {
     const members = group.members.map((m) => ({
       userId: m.userId.toString(),
       name: m.name,
+      isLeader: m.userId.toString() === group.createdBy.toString(),
       hasSubmitted: submittedIds.has(m.userId.toString()),
     }));
 
@@ -141,4 +142,3 @@ async function leaveGroup(req, res) {
 }
 
 module.exports = { createGroup, joinGroup, getGroupStatus, getMyGroups, leaveGroup };
-
