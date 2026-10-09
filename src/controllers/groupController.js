@@ -130,11 +130,35 @@ async function leaveGroup(req, res) {
   try {
     const { groupId } = req.params;
     const group = req.group;
-    group.members = group.members.filter((m) => m.userId.toString() !== req.userId);
+    const remainingMembers = group.members.filter((m) => m.userId.toString() !== req.userId);
+    const isLeader = group.createdBy.toString() === req.userId;
+
+    if (remainingMembers.length === 0) {
+      await Location.deleteMany({ groupId });
+      await Vote.deleteMany({ groupId });
+      await group.deleteOne();
+      return res.json({ message: 'Nhóm đã được xóa vì thành viên cuối cùng đã rời', groupDeleted: true });
+    }
+
+    let newLeader = null;
+    if (isLeader) {
+      newLeader = [...remainingMembers].sort(
+        (first, second) => new Date(first.joinedAt || 0) - new Date(second.joinedAt || 0)
+      )[0];
+      group.createdBy = newLeader.userId;
+    }
+
+    group.members = remainingMembers;
     await group.save();
     await Location.deleteOne({ groupId, userId: req.userId });
     await Vote.deleteOne({ groupId, userId: req.userId });
-    res.json({ message: 'Đã rời nhóm' });
+
+    res.json({
+      message: isLeader
+        ? `Đã chuyển quyền trưởng nhóm cho ${newLeader.name}`
+        : 'Đã rời nhóm',
+      newLeader: newLeader?.name,
+    });
   } catch (err) {
     console.error('Lỗi rời nhóm:', err);
     res.status(500).json({ error: 'Lỗi server khi rời nhóm' });
