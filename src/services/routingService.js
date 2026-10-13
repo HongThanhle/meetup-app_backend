@@ -3,38 +3,7 @@ const axios = require('axios');
 const GEOAPIFY_ROUTING_URL = 'https://api.geoapify.com/v1/routing';
 const REQUEST_TIMEOUT_MS = 12000;
 
-async function getMotorcycleRoute(start, destination) {
-  const apiKey = process.env.GEOAPIFY_API_KEY;
-  if (!apiKey) {
-    const error = new Error('Thiếu GEOAPIFY_API_KEY trong biến môi trường');
-    error.code = 'ROUTING_UNAVAILABLE';
-    throw error;
-  }
-
-  let response;
-  try {
-    response = await axios.get(GEOAPIFY_ROUTING_URL, {
-      params: {
-        waypoints: `${start.lat},${start.lng}|${destination.lat},${destination.lng}`,
-        mode: 'scooter',
-        type: 'balanced',
-        units: 'metric',
-        format: 'geojson',
-        apiKey,
-      },
-      timeout: REQUEST_TIMEOUT_MS,
-    });
-  } catch (cause) {
-    console.error('Geoapify Routing lỗi:', {
-      status: cause.response?.status,
-      message: cause.message,
-      details: cause.response?.data?.message || cause.response?.data?.error,
-    });
-    const error = new Error('Không thể lấy tuyến xe máy từ Geoapify');
-    error.code = 'ROUTING_UNAVAILABLE';
-    throw error;
-  }
-
+function parseRoute(response, travelMode) {
   const route = response.data?.features?.[0];
   const coordinates = route?.geometry?.coordinates;
   if (
@@ -56,8 +25,69 @@ async function getMotorcycleRoute(start, destination) {
     coordinates,
     distanceMeters: route.properties.distance,
     durationSeconds: route.properties.time,
-    travelMode: 'scooter',
+    travelMode,
   };
+}
+
+async function requestRoute(start, destination, travelMode, apiKey) {
+  const response = await axios.get(GEOAPIFY_ROUTING_URL, {
+    params: {
+      waypoints: `${start.lat},${start.lng}|${destination.lat},${destination.lng}`,
+      mode: travelMode,
+      type: 'balanced',
+      units: 'metric',
+      format: 'geojson',
+      apiKey,
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+
+  return parseRoute(response, travelMode);
+}
+
+async function getMotorcycleRoute(start, destination) {
+  const apiKey = process.env.GEOAPIFY_API_KEY;
+  if (!apiKey) {
+    const error = new Error('Thiếu GEOAPIFY_API_KEY trong biến môi trường');
+    error.code = 'ROUTING_UNAVAILABLE';
+    throw error;
+  }
+
+  const modes = [
+    { requestMode: 'motorcycle', responseMode: 'motorcycle' },
+    { requestMode: 'scooter', responseMode: 'scooter' },
+    { requestMode: 'drive', responseMode: 'drive-fallback' },
+  ];
+  const requestErrors = [];
+  for (const { requestMode, responseMode } of modes) {
+    try {
+      const route = await requestRoute(start, destination, requestMode, apiKey);
+      if (route) {
+        route.travelMode = responseMode;
+        return route;
+      }
+
+      console.warn('Geoapify không tìm thấy tuyến cho profile:', {
+        travelMode: requestMode,
+      });
+    } catch (cause) {
+      requestErrors.push(cause);
+      console.error('Geoapify Routing lỗi:', {
+        travelMode: requestMode,
+        status: cause.response?.status,
+        message: cause.message,
+        details: cause.response?.data?.message || cause.response?.data?.error,
+      });
+    }
+  }
+
+  if (requestErrors.length === modes.length) {
+    const error = new Error('Không thể lấy tuyến xe máy từ Geoapify');
+    error.code = 'ROUTING_UNAVAILABLE';
+    throw error;
+  }
+
+  return null;
 }
 
 module.exports = { getMotorcycleRoute };
