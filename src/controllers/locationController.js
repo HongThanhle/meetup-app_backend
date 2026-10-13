@@ -9,7 +9,7 @@ const {
   normalizePlaceCategories,
   getPlaceSearchRadius,
 } = require('../services/placeCategories');
-const { getDrivingRoute } = require('../services/routingService');
+const { getMotorcycleRoute } = require('../services/routingService');
 const { calculateCentroid, haversineDistance } = require('../services/geoAlgorithm');
 const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
 
@@ -21,14 +21,17 @@ async function geocodePreview(req, res) {
       return res.status(400).json({ error: 'Địa chỉ không hợp lệ' });
     }
 
-    const result = await geocode(address);
-    if (!result) {
+    const candidates = await geocode(address);
+    if (candidates.length === 0) {
       return res.status(404).json({ error: 'Không tìm được địa chỉ này' });
     }
 
-    res.json(result); // { lat, lng, matchedAddress }
+    res.json({ candidates });
   } catch (err) {
     console.error('Lỗi geocode:', err);
+    if (err.code === 'GEOCODING_UNAVAILABLE') {
+      return res.status(503).json({ error: 'Dịch vụ tìm địa chỉ đang tạm thời không khả dụng.' });
+    }
     res.status(500).json({ error: 'Lỗi server khi geocode' });
   }
 }
@@ -47,6 +50,9 @@ async function reverseGeocodeAddress(req, res) {
     res.json({ address });
   } catch (err) {
     console.error('Lỗi reverse geocode:', err);
+    if (err.code === 'GEOCODING_UNAVAILABLE') {
+      return res.status(503).json({ error: 'Dịch vụ tìm địa chỉ đang tạm thời không khả dụng.' });
+    }
     res.status(500).json({ error: 'Lỗi server khi reverse geocode' });
   }
 }
@@ -158,7 +164,7 @@ async function getRouteToSuggestion(req, res) {
       return res.status(404).json({ error: 'Bạn chưa gửi vị trí trong nhóm này' });
     }
 
-    const route = await getDrivingRoute(
+    const route = await getMotorcycleRoute(
       { lat: viewerLocation.lat, lng: viewerLocation.lng },
       { lat, lng }
     );

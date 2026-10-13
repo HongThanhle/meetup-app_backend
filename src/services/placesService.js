@@ -1,33 +1,9 @@
 const axios = require('axios');
 const { PLACE_CATEGORIES } = require('./placeCategories');
+const { formatAddress } = require('./geocodeService');
 
 const GEOAPIFY_BASE = 'https://api.geoapify.com/v2/places';
 const REQUEST_TIMEOUT_MS = 15000;
-
-function getPlaceAddress(properties) {
-  if (typeof properties.formatted === 'string' && properties.formatted.trim()) {
-    return properties.formatted.trim();
-  }
-
-  const addressLines = [properties.address_line1, properties.address_line2]
-    .filter((line) => typeof line === 'string' && line.trim());
-  if (addressLines.length > 0) {
-    return [...new Set(addressLines.map((line) => line.trim()))].join(', ');
-  }
-
-  const addressParts = [
-    properties.housenumber,
-    properties.street,
-    properties.suburb,
-    properties.district,
-    properties.city,
-    properties.state,
-    properties.postcode,
-    properties.country,
-  ].filter((part) => typeof part === 'string' && part.trim());
-
-  return [...new Set(addressParts.map((part) => part.trim()))].join(', ');
-}
 
 async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
   if (!Array.isArray(categories) || categories.length === 0) {
@@ -47,30 +23,29 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
         categories: categories.join(','),
         filter: `circle:${lng},${lat},${radiusMeters}`,
         limit: 50,
+        lang: 'vi',
         apiKey,
       },
       timeout: REQUEST_TIMEOUT_MS,
     });
 
-    const features = response.data.features || [];
-
     const selectedCategories = new Set(categories);
     const categoryTypes = new Map(PLACE_CATEGORIES.map(({ id, type }) => [id, type]));
 
-    return features.flatMap((f) => {
-      const props = f.properties;
-      const matchingCategory = (props.categories || []).find((category) => (
+    return (response.data?.features || []).flatMap((feature) => {
+      const properties = feature.properties || {};
+      const matchingCategory = (properties.categories || []).find((category) => (
         [...selectedCategories].some((selected) => (
           category === selected || category.startsWith(`${selected}.`)
         ))
       ));
-      const name = typeof props.name === 'string' ? props.name.trim() : '';
-      const address = getPlaceAddress(props);
-      const coordinates = f.geometry?.coordinates;
+      const name = typeof properties.name === 'string' ? properties.name.trim() : '';
+      const address = formatAddress(properties);
+      const coordinates = feature.geometry?.coordinates;
 
       if (
         !matchingCategory
-        || !props.place_id
+        || !properties.place_id
         || !name
         || !address
         || !Array.isArray(coordinates)
@@ -81,7 +56,7 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
       }
 
       return [{
-        id: String(props.place_id),
+        id: String(properties.place_id),
         name,
         lat: coordinates[1],
         lng: coordinates[0],
@@ -89,17 +64,17 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
         type: categoryTypes.get(matchingCategory)
           || PLACE_CATEGORIES.find(({ id }) => matchingCategory.startsWith(`${id}.`))?.type
           || 'Địa điểm',
-        website: props.website || null,
-        phone: props.contact?.phone || null,
+        website: properties.website || null,
+        phone: properties.contact?.phone || null,
       }];
     });
-  } catch (err) {
-    console.error('Geoapify lỗi:', {
-      status: err.response?.status,
-      message: err.message,
-      details: err.response?.data?.message || err.response?.data?.error,
+  } catch (cause) {
+    console.error('Geoapify Places lỗi:', {
+      status: cause.response?.status,
+      message: cause.message,
+      details: cause.response?.data?.message || cause.response?.data?.error,
     });
-    const error = new Error(`Không thể lấy địa điểm từ Geoapify: ${err.message}`);
+    const error = new Error('Không thể lấy địa điểm từ Geoapify');
     error.code = 'PLACES_UNAVAILABLE';
     throw error;
   }

@@ -13,38 +13,82 @@ function getApiKey() {
   return apiKey;
 }
 
-// Địa chỉ dạng chữ -> tọa độ
+function formatAddress(result) {
+  const localArea = [result.suburb, result.district]
+    .filter((part) => typeof part === 'string' && part.trim());
+  const addressParts = [
+    result.housenumber,
+    result.street,
+    ...localArea,
+    ...(localArea.length > 0 || result.state ? [] : [result.city]),
+    result.state,
+    result.country,
+  ].filter((part) => typeof part === 'string' && part.trim());
+  const structuredAddress = [...new Set(addressParts.map((part) => part.trim()))].join(', ');
+
+  return structuredAddress || result.formatted || '';
+}
+
 async function geocode(addressText) {
-  const response = await axios.get(`${GEOAPIFY_BASE}/search`, {
-    params: {
-      text: addressText,
-      format: 'json',
-      filter: 'countrycode:vn',
-      limit: 1,
-      apiKey: getApiKey(),
-    },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
+  try {
+    const response = await axios.get(`${GEOAPIFY_BASE}/search`, {
+      params: {
+        text: addressText,
+        format: 'json',
+        filter: 'countrycode:vn',
+        limit: 5,
+        lang: 'vi',
+        apiKey: getApiKey(),
+      },
+      timeout: REQUEST_TIMEOUT_MS,
+    });
 
-  const result = response.data?.results?.[0];
-  if (!result) {
-    return null;
+    return (response.data?.results || []).flatMap((result) => {
+      const matchedAddress = formatAddress(result);
+      if (
+        !matchedAddress
+        || !Number.isFinite(result.lat)
+        || !Number.isFinite(result.lon)
+      ) {
+        return [];
+      }
+
+      return [{
+        lat: result.lat,
+        lng: result.lon,
+        matchedAddress,
+      }];
+    });
+  } catch (cause) {
+    console.error('Geoapify Geocoding lỗi:', {
+      status: cause.response?.status,
+      message: cause.message,
+      details: cause.response?.data?.message || cause.response?.data?.error,
+    });
+    const error = new Error('Không thể lấy địa chỉ từ Geoapify');
+    error.code = 'GEOCODING_UNAVAILABLE';
+    throw error;
   }
-
-  return {
-    lat: result.lat,
-    lng: result.lon,
-    matchedAddress: result.formatted,
-  };
 }
 
-// Tọa độ -> địa chỉ dạng chữ (dùng cho hiển thị, không bắt buộc)
 async function reverseGeocode(lat, lng) {
-  const response = await axios.get(`${GEOAPIFY_BASE}/reverse`, {
-    params: { lat, lon: lng, format: 'json', apiKey: getApiKey() },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  return response.data?.results?.[0]?.formatted || null;
+  try {
+    const response = await axios.get(`${GEOAPIFY_BASE}/reverse`, {
+      params: { lat, lon: lng, format: 'json', lang: 'vi', apiKey: getApiKey() },
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+    const result = response.data?.results?.[0];
+    return result ? formatAddress(result) || null : null;
+  } catch (cause) {
+    console.error('Geoapify Reverse Geocoding lỗi:', {
+      status: cause.response?.status,
+      message: cause.message,
+      details: cause.response?.data?.message || cause.response?.data?.error,
+    });
+    const error = new Error('Không thể lấy địa chỉ từ Geoapify');
+    error.code = 'GEOCODING_UNAVAILABLE';
+    throw error;
+  }
 }
 
-module.exports = { geocode, reverseGeocode };
+module.exports = { geocode, reverseGeocode, formatAddress };
