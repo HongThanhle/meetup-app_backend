@@ -2,7 +2,14 @@ const express = require('express');
 const router = express.Router();
 const verifyToken = require('../middleware/authMiddleware');
 const requireGroupMember = require('../middleware/groupMiddleware');
-const { createGroup, joinGroup, getGroupStatus, getMyGroups, leaveGroup } = require('../controllers/groupController');
+const {
+  createGroup,
+  joinGroup,
+  getGroupStatus,
+  updatePlaceCategories,
+  getMyGroups,
+  leaveGroup,
+} = require('../controllers/groupController');
 const {
   submitLocation,
   getSuggestions,
@@ -20,6 +27,7 @@ router.get('/', getMyGroups);
 router.post('/', createGroup);
 router.post('/join', joinGroup);
 router.get('/:groupId/status', requireGroupMember, getGroupStatus);
+router.put('/:groupId/place-categories', requireGroupMember, updatePlaceCategories);
 router.post('/:groupId/leave', requireGroupMember, leaveGroup);
 router.post('/:groupId/location', requireGroupMember, submitLocation);
 router.get('/:groupId/suggest', requireGroupMember, getSuggestions);

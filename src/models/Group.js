@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { DEFAULT_PLACE_CATEGORIES } = require('../services/placeCategories');
 
 const groupSchema = new mongoose.Schema({
   groupName: { type: String, required: true },
@@ -11,6 +12,11 @@ const groupSchema = new mongoose.Schema({
       joinedAt: { type: Date, default: Date.now },
     },
   ],
+  placeCategories: {
+    type: [String],
+    default: () => [...DEFAULT_PLACE_CATEGORIES],
+  },
+  placeCategoriesLocked: { type: Boolean, default: false },
   // --- Thêm cho tính năng vote ---
   finalizedPlace: {
     placeId: String,

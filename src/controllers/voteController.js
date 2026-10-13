@@ -19,8 +19,22 @@ async function castVote(req, res) {
     }
 
     const group = await Group.findById(groupId);
-    if (!group) return res.status(404).json({ error: 'Không tìm thấy nhóm' });
-    if (group.finalizedPlace?.placeId) {
+    if (!group) {
+      return res.status(404).json({ error: 'Không tìm thấy nhóm' });
+    }
+
+    const lockedGroup = await Group.findOneAndUpdate(
+      {
+        _id: groupId,
+        $or: [
+          { 'finalizedPlace.placeId': { $exists: false } },
+          { 'finalizedPlace.placeId': null },
+        ],
+      },
+      { $set: { placeCategoriesLocked: true } },
+      { new: true }
+    );
+    if (!lockedGroup) {
       return res.status(400).json({ error: 'Nhóm đã chốt điểm hẹn, không thể đổi vote' });
     }
 
@@ -35,7 +49,7 @@ async function castVote(req, res) {
       );
     }
 
-    const result = await getVoteTally(group, userId);
+    const result = await getVoteTally(lockedGroup, userId);
     res.json(result);
   } catch (err) {
     console.error('Lỗi khi bình chọn:', err);
@@ -135,6 +149,7 @@ async function getVoteTally(group, viewerId) {
     tally,
     finalizedPlace: group.finalizedPlace?.placeId ? group.finalizedPlace : null,
     canFinalize: String(group.createdBy) === String(viewerId),
+    placeCategoriesLocked: Boolean(group.placeCategoriesLocked || votes.length > 0 || group.finalizedPlace?.placeId),
   };
 }
 

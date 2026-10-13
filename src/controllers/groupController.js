@@ -3,6 +3,11 @@ const Location = require('../models/Location');
 const User = require('../models/User');
 const Vote = require('../models/Vote');
 const { isNonEmptyString } = require('../middleware/validation');
+const {
+  DEFAULT_PLACE_CATEGORIES,
+  PLACE_CATEGORIES,
+  PLACE_CATEGORY_IDS,
+} = require('../services/placeCategories');
 
 // Sinh mã mời ngẫu nhiên 6 ký tự, chỉ chữ hoa + số, tránh ký tự dễ nhầm (0/O, 1/I)
 function generateInviteCode() {
@@ -114,6 +119,62 @@ async function getGroupStatus(req, res) {
   }
 }
 
+async function updatePlaceCategories(req, res) {
+  try {
+    const { groupId } = req.params;
+    const { categories } = req.body;
+    const group = await Group.findById(groupId);
+
+    if (!group) {
+      return res.status(404).json({ error: 'Không tìm thấy nhóm' });
+    }
+    if (String(group.createdBy) !== String(req.userId)) {
+      return res.status(403).json({ error: 'Chỉ trưởng nhóm mới có thể chọn loại địa điểm' });
+    }
+    if (
+      !Array.isArray(categories)
+      || categories.length === 0
+      || categories.length > PLACE_CATEGORIES.length
+      || categories.some((category) => typeof category !== 'string' || !PLACE_CATEGORY_IDS.has(category))
+      || new Set(categories).size !== categories.length
+    ) {
+      return res.status(400).json({ error: 'Danh sách loại địa điểm không hợp lệ' });
+    }
+    if (group.finalizedPlace?.placeId) {
+      return res.status(409).json({ error: 'Nhóm đã chốt điểm hẹn, không thể đổi loại địa điểm' });
+    }
+
+    const hasVotes = await Vote.exists({ groupId });
+    if (hasVotes) {
+      await Group.updateOne({ _id: groupId }, { $set: { placeCategoriesLocked: true } });
+      return res.status(409).json({ error: 'Đã có bình chọn, không thể đổi loại địa điểm' });
+    }
+
+    const updatedGroup = await Group.findOneAndUpdate(
+      {
+        _id: groupId,
+        createdBy: req.userId,
+        placeCategoriesLocked: { $ne: true },
+        'finalizedPlace.placeId': { $exists: false },
+      },
+      { $set: { placeCategories: categories } },
+      { new: true }
+    );
+
+    if (!updatedGroup) {
+      return res.status(409).json({ error: 'Đã có bình chọn hoặc nhóm đã chốt, không thể đổi loại địa điểm' });
+    }
+
+    res.json({
+      placeCategories: updatedGroup.placeCategories,
+      placeCategoriesLocked: false,
+    });
+  } catch (err) {
+    console.error('Lỗi cập nhật loại địa điểm:', err);
+    res.status(500).json({ error: 'Không thể cập nhật loại địa điểm' });
+  }
+}
+
 async function getMyGroups(req, res) {
   try {
     const groups = await Group.find({ 'members.userId': req.userId }).sort({ createdAt: -1 });
@@ -169,4 +230,11 @@ async function leaveGroup(req, res) {
   }
 }
 
-module.exports = { createGroup, joinGroup, getGroupStatus, getMyGroups, leaveGroup };
+module.exports = {
+  createGroup,
+  joinGroup,
+  getGroupStatus,
+  updatePlaceCategories,
+  getMyGroups,
+  leaveGroup,
+};

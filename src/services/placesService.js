@@ -1,9 +1,14 @@
 const axios = require('axios');
+const { PLACE_CATEGORIES } = require('./placeCategories');
 
 const GEOAPIFY_BASE = 'https://api.geoapify.com/v2/places';
 const REQUEST_TIMEOUT_MS = 15000;
 
-async function findCafesNearby(lat, lng, radiusMeters = 1500) {
+async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
+  if (!Array.isArray(categories) || categories.length === 0) {
+    throw new Error('Cần chọn ít nhất một loại địa điểm');
+  }
+
   const apiKey = process.env.GEOAPIFY_API_KEY;
   if (!apiKey) {
     const error = new Error('Thiếu GEOAPIFY_API_KEY trong biến môi trường');
@@ -14,9 +19,9 @@ async function findCafesNearby(lat, lng, radiusMeters = 1500) {
   try {
     const response = await axios.get(GEOAPIFY_BASE, {
       params: {
-        categories: 'catering.cafe,catering.restaurant',
+        categories: categories.join(','),
         filter: `circle:${lng},${lat},${radiusMeters}`,
-        limit: 20,
+        limit: 50,
         apiKey,
       },
       timeout: REQUEST_TIMEOUT_MS,
@@ -24,20 +29,44 @@ async function findCafesNearby(lat, lng, radiusMeters = 1500) {
 
     const features = response.data.features || [];
 
-    return features.map((f) => {
-      const props = f.properties;
-      const isCafe = (props.categories || []).some((c) => c.includes('cafe'));
+    const selectedCategories = new Set(categories);
+    const categoryTypes = new Map(PLACE_CATEGORIES.map(({ id, type }) => [id, type]));
 
-      return {
+    return features.flatMap((f) => {
+      const props = f.properties;
+      const matchingCategory = (props.categories || []).find((category) => (
+        [...selectedCategories].some((selected) => (
+          category === selected || category.startsWith(`${selected}.`)
+        ))
+      ));
+      const name = typeof props.name === 'string' ? props.name.trim() : '';
+      const address = typeof props.formatted === 'string' ? props.formatted.trim() : '';
+      const coordinates = f.geometry?.coordinates;
+
+      if (
+        !matchingCategory
+        || !props.place_id
+        || !name
+        || !address
+        || !Array.isArray(coordinates)
+        || !Number.isFinite(coordinates[0])
+        || !Number.isFinite(coordinates[1])
+      ) {
+        return [];
+      }
+
+      return [{
         id: String(props.place_id),
-        name: props.name || 'Không rõ tên',
-        lat: f.geometry.coordinates[1],
-        lng: f.geometry.coordinates[0],
-        address: props.formatted || null,
-        type: isCafe ? 'Quán cà phê' : 'Nhà hàng',
+        name,
+        lat: coordinates[1],
+        lng: coordinates[0],
+        address,
+        type: categoryTypes.get(matchingCategory)
+          || PLACE_CATEGORIES.find(({ id }) => matchingCategory.startsWith(`${id}.`))?.type
+          || 'Địa điểm',
         website: props.website || null,
         phone: props.contact?.phone || null,
-      };
+      }];
     });
   } catch (err) {
     console.error('Geoapify lỗi:', err.message);
@@ -47,4 +76,4 @@ async function findCafesNearby(lat, lng, radiusMeters = 1500) {
   }
 }
 
-module.exports = { findCafesNearby };
+module.exports = { findPlacesNearby };

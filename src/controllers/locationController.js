@@ -1,7 +1,12 @@
 const Location = require('../models/Location');
 const Group = require('../models/Group');
+const Vote = require('../models/Vote');
 const { geocode, reverseGeocode } = require('../services/geocodeService');
-const { findCafesNearby } = require('../services/placesService');
+const { findPlacesNearby } = require('../services/placesService');
+const {
+  DEFAULT_PLACE_CATEGORIES,
+  PLACE_CATEGORIES,
+} = require('../services/placeCategories');
 const { getDrivingRoute } = require('../services/routingService');
 const { calculateCentroid, haversineDistance } = require('../services/geoAlgorithm');
 const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
@@ -72,7 +77,7 @@ async function submitLocation(req, res) {
   }
 }
 
-// Tính centroid từ mọi vị trí trong nhóm, tìm quán cà phê quanh đó
+// Tính centroid từ mọi vị trí trong nhóm, tìm địa điểm phù hợp quanh đó
 async function getSuggestions(req, res) {
   try {
     const { groupId } = req.params;
@@ -83,12 +88,15 @@ async function getSuggestions(req, res) {
 
     const centroid = calculateCentroid(locations);
 
-    const cafes = await findCafesNearby(centroid.lat, centroid.lng, 1500);
+    const placeCategories = req.group.placeCategories?.length
+      ? req.group.placeCategories
+      : DEFAULT_PLACE_CATEGORIES;
+    const places = await findPlacesNearby(centroid.lat, centroid.lng, placeCategories, 1500);
 
-    const ranked = cafes
-      .map((cafe) => ({
-        ...cafe,
-        distance: haversineDistance(centroid.lat, centroid.lng, cafe.lat, cafe.lng),
+    const ranked = places
+      .map((place) => ({
+        ...place,
+        distance: haversineDistance(centroid.lat, centroid.lng, place.lat, place.lng),
       }))
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 15); // giới hạn top 15 kết quả gần nhất
@@ -102,6 +110,14 @@ async function getSuggestions(req, res) {
       viewerLocation: viewerLocation
         ? { lat: viewerLocation.lat, lng: viewerLocation.lng }
         : null,
+      placeCategories,
+      availableCategories: PLACE_CATEGORIES.map(({ id, label }) => ({ id, label })),
+      canEditPlaceCategories: String(req.group.createdBy) === String(req.userId),
+      placeCategoriesLocked: Boolean(
+        req.group.placeCategoriesLocked
+        || req.group.finalizedPlace?.placeId
+        || await Vote.exists({ groupId })
+      ),
       suggestions: ranked,
     });
   } catch (err) {
