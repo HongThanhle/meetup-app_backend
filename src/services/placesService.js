@@ -4,6 +4,31 @@ const { PLACE_CATEGORIES } = require('./placeCategories');
 const GEOAPIFY_BASE = 'https://api.geoapify.com/v2/places';
 const REQUEST_TIMEOUT_MS = 15000;
 
+function getPlaceAddress(properties) {
+  if (typeof properties.formatted === 'string' && properties.formatted.trim()) {
+    return properties.formatted.trim();
+  }
+
+  const addressLines = [properties.address_line1, properties.address_line2]
+    .filter((line) => typeof line === 'string' && line.trim());
+  if (addressLines.length > 0) {
+    return [...new Set(addressLines.map((line) => line.trim()))].join(', ');
+  }
+
+  const addressParts = [
+    properties.housenumber,
+    properties.street,
+    properties.suburb,
+    properties.district,
+    properties.city,
+    properties.state,
+    properties.postcode,
+    properties.country,
+  ].filter((part) => typeof part === 'string' && part.trim());
+
+  return [...new Set(addressParts.map((part) => part.trim()))].join(', ');
+}
+
 async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
   if (!Array.isArray(categories) || categories.length === 0) {
     throw new Error('Cần chọn ít nhất một loại địa điểm');
@@ -40,7 +65,7 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
         ))
       ));
       const name = typeof props.name === 'string' ? props.name.trim() : '';
-      const address = typeof props.formatted === 'string' ? props.formatted.trim() : '';
+      const address = getPlaceAddress(props);
       const coordinates = f.geometry?.coordinates;
 
       if (
@@ -69,7 +94,11 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
       }];
     });
   } catch (err) {
-    console.error('Geoapify lỗi:', err.message);
+    console.error('Geoapify lỗi:', {
+      status: err.response?.status,
+      message: err.message,
+      details: err.response?.data?.message || err.response?.data?.error,
+    });
     const error = new Error(`Không thể lấy địa điểm từ Geoapify: ${err.message}`);
     error.code = 'PLACES_UNAVAILABLE';
     throw error;

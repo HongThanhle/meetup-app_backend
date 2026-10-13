@@ -6,6 +6,8 @@ const { findPlacesNearby } = require('../services/placesService');
 const {
   DEFAULT_PLACE_CATEGORIES,
   PLACE_CATEGORIES,
+  normalizePlaceCategories,
+  getPlaceSearchRadius,
 } = require('../services/placeCategories');
 const { getDrivingRoute } = require('../services/routingService');
 const { calculateCentroid, haversineDistance } = require('../services/geoAlgorithm');
@@ -88,10 +90,21 @@ async function getSuggestions(req, res) {
 
     const centroid = calculateCentroid(locations);
 
-    const placeCategories = req.group.placeCategories?.length
+    const storedCategories = req.group.placeCategories?.length
       ? req.group.placeCategories
       : DEFAULT_PLACE_CATEGORIES;
-    const places = await findPlacesNearby(centroid.lat, centroid.lng, placeCategories, 1500);
+    const placeCategories = normalizePlaceCategories(storedCategories);
+    if (JSON.stringify(placeCategories) !== JSON.stringify(storedCategories)) {
+      req.group.placeCategories = placeCategories;
+      await req.group.save();
+    }
+    const searchRadiusMeters = getPlaceSearchRadius(placeCategories);
+    const places = await findPlacesNearby(
+      centroid.lat,
+      centroid.lng,
+      placeCategories,
+      searchRadiusMeters
+    );
 
     const ranked = places
       .map((place) => ({
@@ -111,6 +124,7 @@ async function getSuggestions(req, res) {
         ? { lat: viewerLocation.lat, lng: viewerLocation.lng }
         : null,
       placeCategories,
+      searchRadiusMeters,
       availableCategories: PLACE_CATEGORIES.map(({ id, label }) => ({ id, label })),
       canEditPlaceCategories: String(req.group.createdBy) === String(req.userId),
       placeCategoriesLocked: Boolean(
