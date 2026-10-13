@@ -1,6 +1,7 @@
 const axios = require('axios');
 
 const GEOAPIFY_ROUTING_URL = 'https://api.geoapify.com/v1/routing';
+const OSRM_ROUTING_URL = 'https://router.project-osrm.org/route/v1/driving';
 const REQUEST_TIMEOUT_MS = 12000;
 
 function parseRoute(response, travelMode) {
@@ -48,6 +49,40 @@ async function requestRoute(start, destination, travelMode, apiKey) {
   return parseRoute(response, travelMode);
 }
 
+async function requestDrivingFallback(start, destination) {
+  const coordinates = `${start.lng},${start.lat};${destination.lng},${destination.lat}`;
+  const response = await axios.get(`${OSRM_ROUTING_URL}/${coordinates}`, {
+    params: {
+      overview: 'full',
+      geometries: 'geojson',
+      steps: false,
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+  const route = response.data?.routes?.[0];
+  if (
+    response.data?.code !== 'Ok'
+    || !Array.isArray(route?.geometry?.coordinates)
+    || route.geometry.coordinates.length < 2
+    || !route.geometry.coordinates.every((point) => (
+      Array.isArray(point)
+      && Number.isFinite(point[0])
+      && Number.isFinite(point[1])
+    ))
+    || !Number.isFinite(route.distance)
+    || !Number.isFinite(route.duration)
+  ) {
+    return null;
+  }
+
+  return {
+    coordinates: route.geometry.coordinates,
+    distanceMeters: route.distance,
+    durationSeconds: route.duration,
+    travelMode: 'drive-fallback',
+  };
+}
+
 async function getMotorcycleRoute(start, destination) {
   const apiKey = process.env.GEOAPIFY_API_KEY;
   if (!apiKey) {
@@ -59,9 +94,7 @@ async function getMotorcycleRoute(start, destination) {
   const modes = [
     { requestMode: 'motorcycle', responseMode: 'motorcycle' },
     { requestMode: 'scooter', responseMode: 'scooter' },
-    { requestMode: 'drive', responseMode: 'drive-fallback' },
   ];
-  const requestErrors = [];
   for (const { requestMode, responseMode } of modes) {
     try {
       const route = await requestRoute(start, destination, requestMode, apiKey);
@@ -74,7 +107,6 @@ async function getMotorcycleRoute(start, destination) {
         travelMode: requestMode,
       });
     } catch (cause) {
-      requestErrors.push(cause);
       console.error('Geoapify Routing lỗi:', {
         travelMode: requestMode,
         status: cause.response?.status,
@@ -84,10 +116,19 @@ async function getMotorcycleRoute(start, destination) {
     }
   }
 
-  if (requestErrors.length === modes.length) {
-    const error = new Error('Không thể lấy tuyến xe máy từ Geoapify');
-    error.code = 'ROUTING_UNAVAILABLE';
-    throw error;
+  try {
+    const fallbackRoute = await requestDrivingFallback(start, destination);
+    if (fallbackRoute) {
+      console.warn('Đang dùng tuyến ô tô OSRM thay cho tuyến xe máy.');
+      return fallbackRoute;
+    }
+    console.warn('OSRM không tìm thấy tuyến lái xe cho hai tọa độ đã chọn.');
+  } catch (cause) {
+    console.error('OSRM Routing lỗi:', {
+      status: cause.response?.status,
+      message: cause.message,
+      details: cause.response?.data?.message || cause.response?.data?.code,
+    });
   }
 
   return null;
