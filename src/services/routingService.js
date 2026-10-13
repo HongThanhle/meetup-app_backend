@@ -5,9 +5,12 @@ const REQUEST_TIMEOUT_MS = 12000;
 
 function parseRoute(response, travelMode) {
   const route = response.data?.features?.[0];
-  const coordinates = route?.geometry?.coordinates;
+  const geometry = route?.geometry;
+  const coordinates = geometry?.type === 'MultiLineString'
+    ? geometry.coordinates?.flat()
+    : geometry?.coordinates;
   if (
-    route?.geometry?.type !== 'LineString'
+    !['LineString', 'MultiLineString'].includes(geometry?.type)
     || !Array.isArray(coordinates)
     || coordinates.length < 2
     || !coordinates.every((point) => (
