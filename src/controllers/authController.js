@@ -37,14 +37,23 @@ async function register(req, res) {
   try {
     const { name, email, password } = req.body;
 
-    if (!isNonEmptyString(name, 80) || !isNonEmptyString(email, 254) || !isNonEmptyString(password, 128)) {
-      return res.status(400).json({ error: 'Tên, email hoặc mật khẩu không hợp lệ' });
+    if (!isNonEmptyString(name, 80)) {
+      return res.status(400).json({ error: 'Tên không hợp lệ' });
+    }
+    if (!isNonEmptyString(email, 254)) {
+      return res.status(400).json({ error: 'Email không hợp lệ' });
+    }
+    if (typeof password !== 'string' || password.trim().length === 0 || password.length > 128) {
+      return res.status(400).json({ error: 'Mật khẩu phải có tối đa 128 ký tự' });
     }
 
     const normalizedName = name.trim();
     const normalizedEmail = email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || password.length < 8) {
-      return res.status(400).json({ error: 'Email hoặc mật khẩu không hợp lệ' });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Email phải có dạng ten@tenmien.edu.vn' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Mật khẩu cần có ít nhất 8 ký tự' });
     }
 
     const existing = await User.findOne({ email: normalizedEmail });
