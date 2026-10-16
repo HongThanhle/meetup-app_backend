@@ -94,35 +94,33 @@ async function requestDrivingFallback(start, destination) {
 
 async function getMotorcycleRoute(start, destination) {
   const apiKey = process.env.GEOAPIFY_API_KEY;
-  if (!apiKey) {
-    const error = new Error('Thiếu GEOAPIFY_API_KEY trong biến môi trường');
-    error.code = 'ROUTING_UNAVAILABLE';
-    throw error;
-  }
+  if (apiKey) {
+    const modes = [
+      { requestMode: 'motorcycle', responseMode: 'motorcycle' },
+      { requestMode: 'scooter', responseMode: 'scooter' },
+    ];
+    for (const { requestMode, responseMode } of modes) {
+      try {
+        const route = await requestRoute(start, destination, requestMode, apiKey);
+        if (route) {
+          route.travelMode = responseMode;
+          return route;
+        }
 
-  const modes = [
-    { requestMode: 'motorcycle', responseMode: 'motorcycle' },
-    { requestMode: 'scooter', responseMode: 'scooter' },
-  ];
-  for (const { requestMode, responseMode } of modes) {
-    try {
-      const route = await requestRoute(start, destination, requestMode, apiKey);
-      if (route) {
-        route.travelMode = responseMode;
-        return route;
+        console.warn('Geoapify không tìm thấy tuyến cho profile:', {
+          travelMode: requestMode,
+        });
+      } catch (cause) {
+        console.error('Geoapify Routing lỗi:', {
+          travelMode: requestMode,
+          status: cause.response?.status,
+          message: cause.message,
+          details: cause.response?.data?.message || cause.response?.data?.error,
+        });
       }
-
-      console.warn('Geoapify không tìm thấy tuyến cho profile:', {
-        travelMode: requestMode,
-      });
-    } catch (cause) {
-      console.error('Geoapify Routing lỗi:', {
-        travelMode: requestMode,
-        status: cause.response?.status,
-        message: cause.message,
-        details: cause.response?.data?.message || cause.response?.data?.error,
-      });
     }
+  } else {
+    console.warn('Thiếu GEOAPIFY_API_KEY; bỏ qua Geoapify và thử tuyến ô tô dự phòng.');
   }
 
   try {
