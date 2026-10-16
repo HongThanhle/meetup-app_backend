@@ -3,6 +3,12 @@ const axios = require('axios');
 const GEOAPIFY_ROUTING_URL = 'https://api.geoapify.com/v1/routing';
 const OSRM_ROUTING_URL = 'https://router.project-osrm.org/route/v1/driving';
 const REQUEST_TIMEOUT_MS = 12000;
+const URBAN_ESTIMATED_SPEED_KMH = 27.5;
+
+function estimateUrbanDurationSeconds(distanceMeters, providerDurationSeconds) {
+  const urbanDurationSeconds = (distanceMeters / 1000) / URBAN_ESTIMATED_SPEED_KMH * 3600;
+  return Math.max(providerDurationSeconds, urbanDurationSeconds);
+}
 
 function parseRoute(response, travelMode) {
   const route = response.data?.features?.[0];
@@ -28,7 +34,10 @@ function parseRoute(response, travelMode) {
   return {
     coordinates,
     distanceMeters: route.properties.distance,
-    durationSeconds: route.properties.time,
+    durationSeconds: estimateUrbanDurationSeconds(
+      route.properties.distance,
+      route.properties.time
+    ),
     travelMode,
   };
 }
@@ -78,7 +87,7 @@ async function requestDrivingFallback(start, destination) {
   return {
     coordinates: route.geometry.coordinates,
     distanceMeters: route.distance,
-    durationSeconds: route.duration,
+    durationSeconds: estimateUrbanDurationSeconds(route.distance, route.duration),
     travelMode: 'drive-fallback',
   };
 }
