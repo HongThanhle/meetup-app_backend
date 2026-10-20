@@ -112,8 +112,12 @@ async function listFriends(req, res) {
 
 async function sendFriendRequest(req, res) {
   try {
+    const { targetUserId } = req.body;
     const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (targetUserId && !isValidObjectId(targetUserId)) {
+      return res.status(400).json({ error: 'Tài khoản cần kết bạn không hợp lệ' });
+    }
+    if (!targetUserId && (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
       return res.status(400).json({ error: 'Email không hợp lệ' });
     }
     if (isRateLimited(requestAttempts, String(req.userId), 20, 60 * 60 * 1000)) {
@@ -122,10 +126,12 @@ async function sendFriendRequest(req, res) {
 
     const [requester, recipient] = await Promise.all([
       User.findById(req.userId).select('name'),
-      User.findOne({ email }).select('name'),
+      targetUserId
+        ? User.findById(targetUserId).select('name')
+        : User.findOne({ email }).select('name'),
     ]);
     if (!requester) return res.status(401).json({ error: 'Tài khoản không tồn tại' });
-    if (!recipient) return res.status(404).json({ error: 'Không tìm thấy tài khoản với email này' });
+    if (!recipient) return res.status(404).json({ error: 'Không tìm thấy tài khoản cần kết bạn' });
     if (String(recipient._id) === String(req.userId)) {
       return res.status(400).json({ error: 'Bạn không thể tự gửi lời mời kết bạn' });
     }
