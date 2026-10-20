@@ -6,6 +6,7 @@ const groupRoutes = require('./routes/groupRoutes');
 const geocodeRoutes = require('./routes/geocodeRoutes');
 const reverseGeocodeRoutes = require('./routes/reverseGeocodeRoutes');
 const friendRoutes = require('./routes/friendRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 
 const app = express();
@@ -20,6 +21,7 @@ app.get('/', (req, res) => {
 app.use('/auth', authRoutes);
 app.use('/groups', groupRoutes);
 app.use('/friends', friendRoutes);
+app.use('/notifications', notificationRoutes);
 app.use('/geocode-preview', geocodeRoutes);
 app.use('/reverse-geocode', reverseGeocodeRoutes);
 

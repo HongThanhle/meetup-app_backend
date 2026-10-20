@@ -20,10 +20,12 @@ const {
   getVoteResults,
   finalizeManually,
 } = require('../controllers/voteController');
+const { listMyMeetupHistory } = require('../controllers/historyController');
 
 router.use(verifyToken);
 
 router.get('/', getMyGroups);
+router.get('/history', listMyMeetupHistory);
 router.post('/', createGroup);
 router.post('/join', joinGroup);
 router.get('/:groupId/status', requireGroupMember, getGroupStatus);

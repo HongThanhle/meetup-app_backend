@@ -6,6 +6,7 @@ const Group = require('../models/Group');
 const User = require('../models/User');
 const { emitToUser } = require('../realtime/socketHub');
 const { emitToGroupMembers } = require('../realtime/socketServer');
+const { createNotification, resolveNotification } = require('../services/notificationService');
 
 const requestAttempts = new Map();
 const inviteAttempts = new Map();
@@ -147,6 +148,18 @@ async function sendFriendRequest(req, res) {
       }
       friendship.status = 'accepted';
       await friendship.save();
+      await resolveNotification({
+        userId: req.userId,
+        type: 'friend_request',
+        friendshipId: friendship._id,
+      }, 'accepted');
+      await createNotification({
+        userId: recipient._id,
+        actorId: req.userId,
+        actorName: requester.name,
+        type: 'friend_accepted',
+        friendshipId: friendship._id,
+      });
       const payload = {
         friendshipId: String(friendship._id),
         userId: String(req.userId),
@@ -166,6 +179,13 @@ async function sendFriendRequest(req, res) {
       userB,
       requestedBy: req.userId,
       status: 'pending',
+    });
+    await createNotification({
+      userId: recipient._id,
+      actorId: req.userId,
+      actorName: requester.name,
+      type: 'friend_request',
+      friendshipId: friendship._id,
     });
     emitToUser(recipient._id, 'friend:request', {
       friendshipId: String(friendship._id),
@@ -204,6 +224,18 @@ async function acceptFriendRequest(req, res) {
       : friendship.userA;
     const user = await User.findById(req.userId).select('name');
     const otherUser = await User.findById(otherUserId).select('name');
+    await resolveNotification({
+      userId: req.userId,
+      type: 'friend_request',
+      friendshipId: friendship._id,
+    }, 'accepted');
+    await createNotification({
+      userId: otherUserId,
+      actorId: req.userId,
+      actorName: user?.name || 'Người dùng',
+      type: 'friend_accepted',
+      friendshipId: friendship._id,
+    });
     emitToUser(otherUserId, 'friend:accepted', {
       friendshipId: String(friendship._id),
       userId: String(req.userId),
@@ -231,6 +263,15 @@ async function removeFriendship(req, res) {
       $or: [{ userA: req.userId }, { userB: req.userId }],
     });
     if (!friendship) return res.status(404).json({ error: 'Không tìm thấy kết nối bạn bè' });
+    if (friendship.status === 'pending') {
+      await resolveNotification({
+        userId: String(friendship.requestedBy) === String(req.userId)
+          ? (String(friendship.userA) === String(req.userId) ? friendship.userB : friendship.userA)
+          : req.userId,
+        type: 'friend_request',
+        friendshipId: friendship._id,
+      }, String(friendship.requestedBy) === String(req.userId) ? 'cancelled' : 'declined');
+    }
     const otherUserId = String(friendship.userA) === String(req.userId)
       ? friendship.userB
       : friendship.userA;
@@ -276,10 +317,24 @@ async function inviteFriendToGroup(req, res) {
     if (group.members.some((member) => String(member.userId) === String(toUserId))) {
       return res.status(409).json({ error: 'Người này đã ở trong nhóm' });
     }
-    await RoomInvite.updateMany(
-      { groupId, fromUser: req.userId, toUser: toUserId, status: 'pending', expiresAt: { $lte: new Date() } },
-      { $set: { status: 'expired' } }
-    );
+    const expiredInvites = await RoomInvite.find({
+      groupId,
+      fromUser: req.userId,
+      toUser: toUserId,
+      status: 'pending',
+      expiresAt: { $lte: new Date() },
+    }).select('_id toUser');
+    if (expiredInvites.length > 0) {
+      await RoomInvite.updateMany(
+        { _id: { $in: expiredInvites.map((invite) => invite._id) }, status: 'pending' },
+        { $set: { status: 'expired' } }
+      );
+      await Promise.all(expiredInvites.map((expiredInvite) => resolveNotification({
+        userId: expiredInvite.toUser,
+        type: 'room_invite',
+        inviteId: expiredInvite._id,
+      }, 'expired')));
+    }
     const activeInvite = await RoomInvite.findOne({
       groupId,
       fromUser: req.userId,
@@ -294,6 +349,15 @@ async function inviteFriendToGroup(req, res) {
       fromUser: req.userId,
       toUser: toUserId,
       expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+    });
+    await createNotification({
+      userId: toUserId,
+      actorId: req.userId,
+      actorName: sender.name,
+      type: 'room_invite',
+      inviteId: invite._id,
+      groupId: group._id,
+      groupName: group.groupName,
     });
     const payload = {
       inviteId: String(invite._id),
@@ -333,19 +397,29 @@ async function respondToRoomInvite(req, res) {
         { _id: existingInvite._id, status: 'pending' },
         { $set: { status: 'expired' } }
       );
+      await resolveNotification({
+        userId: req.userId,
+        type: 'room_invite',
+        inviteId: existingInvite._id,
+      }, 'expired');
+      await createNotification({
+        userId: existingInvite.fromUser,
+        actorName: 'Hệ thống',
+        type: 'room_invite_expired',
+        inviteId: existingInvite._id,
+        groupId: existingInvite.groupId,
+      });
       return res.status(410).json({ error: 'Lời mời vào nhóm đã hết hạn' });
     }
 
-    let group;
-    let user;
-    if (decision === 'accepted') {
-      [group, user] = await Promise.all([
-        Group.findById(existingInvite.groupId).select('groupName inviteCode members'),
-        User.findById(req.userId).select('name'),
-      ]);
-      if (!group) return res.status(404).json({ error: 'Nhóm không còn tồn tại' });
-      if (!user) return res.status(401).json({ error: 'Tài khoản không tồn tại' });
+    const [group, user] = await Promise.all([
+      Group.findById(existingInvite.groupId).select('groupName inviteCode members'),
+      User.findById(req.userId).select('name'),
+    ]);
+    if (decision === 'accepted' && !group) {
+      return res.status(404).json({ error: 'Nhóm không còn tồn tại' });
     }
+    if (!user) return res.status(401).json({ error: 'Tài khoản không tồn tại' });
 
     const invite = await RoomInvite.findOneAndUpdate(
       {
@@ -391,6 +465,21 @@ async function respondToRoomInvite(req, res) {
         name: user.name,
       });
     }
+
+    await resolveNotification({
+      userId: req.userId,
+      type: 'room_invite',
+      inviteId: invite._id,
+    }, decision);
+    await createNotification({
+      userId: invite.fromUser,
+      actorId: req.userId,
+      actorName: user.name,
+      type: decision === 'accepted' ? 'room_invite_accepted' : 'room_invite_declined',
+      inviteId: invite._id,
+      groupId: invite.groupId,
+      groupName: group?.groupName,
+    });
 
     const response = { message: decision === 'accepted' ? 'Đã tham gia nhóm' : 'Đã từ chối lời mời' };
     if (decision === 'accepted') {

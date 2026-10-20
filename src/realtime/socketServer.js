@@ -4,6 +4,7 @@ const User = require('../models/User');
 const Friendship = require('../models/Friendship');
 const Presence = require('../models/Presence');
 const RoomInvite = require('../models/RoomInvite');
+const { resolveNotification, createNotification } = require('../services/notificationService');
 const Group = require('../models/Group');
 const { setSocketServer, emitToUser } = require('./socketHub');
 
@@ -175,11 +176,23 @@ function initializeSocketServer(httpServer) {
         { _id: { $in: expiredInvites.map((invite) => invite._id) }, status: 'pending' },
         { $set: { status: 'expired' } }
       );
-      expiredInvites.forEach((invite) => {
+      await Promise.all(expiredInvites.map(async (invite) => {
+        await resolveNotification({
+          userId: invite.toUser,
+          type: 'room_invite',
+          inviteId: invite._id,
+        }, 'expired');
+        await createNotification({
+          userId: invite.fromUser,
+          actorName: 'Hệ thống',
+          type: 'room_invite_expired',
+          inviteId: invite._id,
+          groupId: invite.groupId,
+        });
         const payload = { inviteId: String(invite._id), status: 'expired' };
         emitToUser(invite.fromUser, 'room:invite_updated', payload);
         emitToUser(invite.toUser, 'room:invite_updated', payload);
-      });
+      }));
     } catch (error) {
       console.error('Không thể dọn lời mời phòng hết hạn:', error.message);
     }

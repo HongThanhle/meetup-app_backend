@@ -1,5 +1,6 @@
 const Vote = require('../models/Vote');
 const Group = require('../models/Group');
+const MeetupHistory = require('../models/MeetupHistory');
 const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
 
 // Bình chọn / đổi vote
@@ -80,9 +81,6 @@ async function finalizeManually(req, res) {
     if (String(group.createdBy) !== String(req.userId)) {
       return res.status(403).json({ error: 'Chỉ người tạo nhóm mới có thể chốt điểm hẹn' });
     }
-    if (group.finalizedPlace?.placeId) {
-      return res.status(409).json({ error: 'Nhóm đã chốt điểm hẹn' });
-    }
     if (
       !isNonEmptyString(placeId, 200)
       || !isNonEmptyString(placeName, 200)
@@ -92,18 +90,64 @@ async function finalizeManually(req, res) {
     ) {
       return res.status(400).json({ error: 'Thông tin điểm hẹn không hợp lệ' });
     }
+    if (group.finalizedPlace?.placeId && group.finalizedPlace.placeId !== placeId) {
+      return res.status(409).json({ error: 'Nhóm đã chốt điểm hẹn' });
+    }
 
-    group.finalizedPlace = {
+    const finalizedPlace = {
       placeId,
       name: placeName.trim(),
       lat,
       lng,
       address: address?.trim() || undefined,
     };
-    group.finalizedAt = new Date();
-    await group.save();
+    const finalizedAt = group.finalizedAt || new Date();
+    const finalizedGroup = await Group.findOneAndUpdate(
+      {
+        _id: groupId,
+        createdBy: req.userId,
+        $or: [
+          { 'finalizedPlace.placeId': { $exists: false } },
+          { 'finalizedPlace.placeId': null },
+        ],
+      },
+      {
+        $set: {
+          finalizedPlace,
+          finalizedAt,
+          placeCategoriesLocked: true,
+        },
+      },
+      { new: true }
+    );
 
-    res.json({ finalizedPlace: group.finalizedPlace });
+    if (!finalizedGroup && !group.finalizedPlace?.placeId) {
+      return res.status(409).json({ error: 'Nhóm vừa được chốt bởi một thành viên khác' });
+    }
+
+    const savedGroup = finalizedGroup || group;
+    const savedPlace = savedGroup.finalizedPlace;
+    const savedAt = savedGroup.finalizedAt || finalizedAt;
+
+    await MeetupHistory.updateOne(
+      { groupId: savedGroup._id },
+      {
+        $setOnInsert: {
+          groupId: savedGroup._id,
+          groupName: savedGroup.groupName,
+          createdBy: savedGroup.createdBy,
+          participants: savedGroup.members.map((member) => ({
+            userId: member.userId,
+            name: member.name,
+          })),
+          place: savedPlace,
+          finalizedAt: savedAt,
+        },
+      },
+      { upsert: true }
+    );
+
+    res.json({ finalizedPlace: savedPlace, finalizedAt: savedAt });
   } catch (err) {
     console.error('Lỗi khi chốt điểm hẹn:', err);
     res.status(500).json({ error: 'Không thể chốt điểm hẹn' });
