@@ -18,13 +18,7 @@ async function listNotifications(req, res) {
       return res.status(400).json({ error: 'Con trỏ phân trang không hợp lệ' });
     }
 
-    const query = {
-      userId: req.userId,
-      $nor: [{
-        type: { $in: ['friend_request', 'room_invite'] },
-        resolvedAt: { $ne: null },
-      }],
-    };
+    const query = { userId: req.userId };
     if (unreadOnly) query.readAt = null;
     if (beforeCreatedAt) {
       const cursorDate = new Date(beforeCreatedAt);
