@@ -37,10 +37,16 @@ async function listFriends(req, res) {
     const friendships = await Friendship.find({
       status: 'accepted',
       $or: [{ userA: req.userId }, { userB: req.userId }],
-    }).select('userA userB');
+    }).select('_id userA userB');
     const friendIds = friendships.map((friendship) => (
       String(friendship.userA) === String(req.userId) ? friendship.userB : friendship.userA
     ));
+    const friendshipIdByFriendId = new Map(friendships.map((friendship) => {
+      const friendId = String(friendship.userA) === String(req.userId)
+        ? friendship.userB
+        : friendship.userA;
+      return [String(friendId), String(friendship._id)];
+    }));
     const [users, presences, incomingRequests, outgoingRequests, pendingInvites] = await Promise.all([
       User.find({ _id: { $in: friendIds } }).select('name'),
       Presence.find({
@@ -72,6 +78,7 @@ async function listFriends(req, res) {
       const presence = presenceById.get(String(friendId));
       return {
         userId: String(friendId),
+        friendshipId: friendshipIdByFriendId.get(String(friendId)),
         name: friend?.name || 'Người dùng',
         status: presence ? 'online' : 'offline',
         lastSeenAt: presence?.lastSeenAt || null,
