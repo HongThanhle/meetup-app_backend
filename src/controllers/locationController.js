@@ -89,9 +89,20 @@ async function submitLocation(req, res) {
 async function getSuggestions(req, res) {
   try {
     const { groupId } = req.params;
-    const locations = await Location.find({ groupId });
-    if (locations.length === 0) {
-      return res.status(400).json({ error: 'Chưa có ai gửi vị trí trong nhóm này' });
+    const memberIds = req.group.members
+      .map((member) => member.userId)
+      .filter(Boolean);
+    const locations = await Location.find({
+      groupId,
+      userId: { $in: memberIds },
+    });
+    const submittedIds = new Set(locations.map((location) => String(location.userId)));
+    const missingCount = memberIds.filter((memberId) => !submittedIds.has(String(memberId))).length;
+    if (missingCount > 0) {
+      const submittedCount = memberIds.length - missingCount;
+      return res.status(409).json({
+        error: `Chưa đủ vị trí để tìm gợi ý (${submittedCount}/${memberIds.length} thành viên đã gửi).`,
+      });
     }
 
     const centroid = calculateCentroid(locations);
