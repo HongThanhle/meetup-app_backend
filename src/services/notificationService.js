@@ -31,7 +31,7 @@ async function resolveNotification(filter, resolution = null) {
   const resolvedAt = new Date();
   const result = await Notification.updateMany(
     { ...filter, resolvedAt: null },
-    { $set: { resolvedAt, resolution } }
+    { $set: { resolvedAt, resolution, readAt: resolvedAt } }
   );
   if (result.modifiedCount > 0 && filter.userId) {
     emitToUser(filter.userId, 'notification:updated', { userId: String(filter.userId) });
