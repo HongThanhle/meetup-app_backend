@@ -227,17 +227,7 @@ async function getSuggestions(req, res) {
           averageTravelTimeSeconds,
         };
       })
-      .sort((a, b) => {
-        if (a.travelTimeSpreadSeconds === null && b.travelTimeSpreadSeconds !== null) return 1;
-        if (a.travelTimeSpreadSeconds !== null && b.travelTimeSpreadSeconds === null) return -1;
-        if (a.travelTimeSpreadSeconds !== b.travelTimeSpreadSeconds) {
-          return a.travelTimeSpreadSeconds - b.travelTimeSpreadSeconds;
-        }
-        if (a.averageTravelTimeSeconds !== b.averageTravelTimeSeconds) {
-          return (a.averageTravelTimeSeconds ?? Infinity) - (b.averageTravelTimeSeconds ?? Infinity);
-        }
-        return a.distance - b.distance;
-      });
+      .sort((a, b) => a.distance - b.distance);
 
     const viewerLocation = locations.find(
       (location) => location.userId.toString() === req.userId
