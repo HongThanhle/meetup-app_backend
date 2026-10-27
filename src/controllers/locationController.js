@@ -1,5 +1,4 @@
 const Location = require('../models/Location');
-const Group = require('../models/Group');
 const Vote = require('../models/Vote');
 const { geocode, reverseGeocode } = require('../services/geocodeService');
 const { findPlacesNearby } = require('../services/placesService');
@@ -9,9 +8,18 @@ const {
   normalizePlaceCategories,
   getPlaceSearchRadius,
 } = require('../services/placeCategories');
-const { getMotorcycleRoute } = require('../services/routingService');
-const { calculateCentroid, haversineDistance } = require('../services/geoAlgorithm');
+const {
+  getRouteForMode,
+  getTravelTimeMatrix,
+} = require('../services/routingService');
+const {
+  calculateCentroid,
+  calculateGeometricMedian,
+  haversineDistance,
+} = require('../services/geoAlgorithm');
 const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
+
+const TRAVEL_MODES = new Set(['motorcycle', 'drive', 'walk']);
 
 // Bước 1 (nhập tay): chỉ geocode để preview, CHƯA lưu DB
 async function geocodePreview(req, res) {
@@ -61,9 +69,20 @@ async function reverseGeocodeAddress(req, res) {
 async function submitLocation(req, res) {
   try {
     const { groupId } = req.params;
-    const { source, lat, lng, address } = req.body;
+    const {
+      source,
+      lat,
+      lng,
+      address,
+      travelMode = 'motorcycle',
+    } = req.body;
 
-    if (!['gps', 'manual'].includes(source) || !isValidCoordinate(lat, -90, 90) || !isValidCoordinate(lng, -180, 180)) {
+    if (
+      !['gps', 'manual'].includes(source)
+      || !TRAVEL_MODES.has(travelMode)
+      || !isValidCoordinate(lat, -90, 90)
+      || !isValidCoordinate(lng, -180, 180)
+    ) {
       return res.status(400).json({ error: 'Thông tin vị trí không hợp lệ' });
     }
 
@@ -74,7 +93,13 @@ async function submitLocation(req, res) {
     // upsert: nếu user đã gửi vị trí trước đó trong nhóm này, ghi đè thay vì tạo mới
     const location = await Location.findOneAndUpdate(
       { groupId, userId: req.userId },
-      { lat, lng, source, rawAddress: source === 'manual' ? address.trim() : null },
+      {
+        lat,
+        lng,
+        source,
+        travelMode,
+        rawAddress: source === 'manual' ? address.trim() : null,
+      },
       { new: true, upsert: true }
     );
 
@@ -85,13 +110,15 @@ async function submitLocation(req, res) {
   }
 }
 
-// Tính centroid từ mọi vị trí trong nhóm, tìm địa điểm phù hợp quanh đó
+// Tính tâm hình học từ mọi vị trí trong nhóm, rồi xếp hạng theo chênh lệch ETA.
 async function getSuggestions(req, res) {
   try {
     const { groupId } = req.params;
-    const memberIds = req.group.members
-      .map((member) => member.userId)
-      .filter(Boolean);
+    const members = req.group.members.filter((member) => member.userId);
+    if (members.length === 0) {
+      return res.status(409).json({ error: 'Nhóm chưa có thành viên để tính gợi ý.' });
+    }
+    const memberIds = members.map((member) => member.userId);
     const locations = await Location.find({
       groupId,
       userId: { $in: memberIds },
@@ -105,7 +132,23 @@ async function getSuggestions(req, res) {
       });
     }
 
-    const centroid = calculateCentroid(locations);
+    const locationsByUserId = new Map(
+      locations.map((location) => [String(location.userId), location])
+    );
+    const travelers = members.map((member) => {
+      const userId = String(member.userId);
+      const location = locationsByUserId.get(userId);
+      return {
+        userId,
+        name: member.name || 'Thành viên',
+        travelMode: TRAVEL_MODES.has(location.travelMode)
+          ? location.travelMode
+          : 'motorcycle',
+        location: { lat: location.lat, lng: location.lng },
+      };
+    });
+    const arithmeticCentroid = calculateCentroid(locations);
+    const centroid = calculateGeometricMedian(locations);
 
     const storedCategories = req.group.placeCategories?.length
       ? req.group.placeCategories
@@ -123,13 +166,78 @@ async function getSuggestions(req, res) {
       searchRadiusMeters
     );
 
-    const ranked = places
+    const candidates = places
       .map((place) => ({
         ...place,
         distance: haversineDistance(centroid.lat, centroid.lng, place.lat, place.lng),
       }))
       .sort((a, b) => a.distance - b.distance)
-      .slice(0, 15); // giới hạn top 15 kết quả gần nhất
+      .slice(0, 15);
+
+    const travelersByMode = new Map();
+    travelers.forEach((traveler) => {
+      if (!travelersByMode.has(traveler.travelMode)) {
+        travelersByMode.set(traveler.travelMode, []);
+      }
+      travelersByMode.get(traveler.travelMode).push(traveler);
+    });
+
+    const matricesByMode = new Map(await Promise.all(
+      [...travelersByMode.entries()].map(async ([travelMode, modeTravelers]) => {
+        const matrix = candidates.length > 0
+          ? await getTravelTimeMatrix(
+            modeTravelers.map((traveler) => traveler.location),
+            candidates.map((place) => ({ lat: place.lat, lng: place.lng })),
+            travelMode
+          )
+          : [];
+        return [travelMode, { travelers: modeTravelers, matrix }];
+      })
+    ));
+
+    const ranked = candidates
+      .map((place, placeIndex) => {
+        const travelTimes = travelers.map((traveler) => {
+          const modeData = matricesByMode.get(traveler.travelMode);
+          const travelerIndex = modeData.travelers.indexOf(traveler);
+          const route = modeData.matrix[travelerIndex]?.[placeIndex];
+          return {
+            userId: traveler.userId,
+            name: traveler.name,
+            travelMode: traveler.travelMode,
+            durationSeconds: route?.durationSeconds ?? null,
+            distanceMeters: route?.distanceMeters ?? null,
+          };
+        });
+        const availableTimes = travelTimes
+          .map(({ durationSeconds }) => durationSeconds)
+          .filter(Number.isFinite);
+        const hasCompleteRoutes = availableTimes.length === travelers.length;
+        const travelTimeSpreadSeconds = hasCompleteRoutes
+          ? Math.max(...availableTimes) - Math.min(...availableTimes)
+          : null;
+        const averageTravelTimeSeconds = availableTimes.length > 0
+          ? availableTimes.reduce((sum, seconds) => sum + seconds, 0) / availableTimes.length
+          : null;
+
+        return {
+          ...place,
+          travelTimes,
+          travelTimeSpreadSeconds,
+          averageTravelTimeSeconds,
+        };
+      })
+      .sort((a, b) => {
+        if (a.travelTimeSpreadSeconds === null && b.travelTimeSpreadSeconds !== null) return 1;
+        if (a.travelTimeSpreadSeconds !== null && b.travelTimeSpreadSeconds === null) return -1;
+        if (a.travelTimeSpreadSeconds !== b.travelTimeSpreadSeconds) {
+          return a.travelTimeSpreadSeconds - b.travelTimeSpreadSeconds;
+        }
+        if (a.averageTravelTimeSeconds !== b.averageTravelTimeSeconds) {
+          return (a.averageTravelTimeSeconds ?? Infinity) - (b.averageTravelTimeSeconds ?? Infinity);
+        }
+        return a.distance - b.distance;
+      });
 
     const viewerLocation = locations.find(
       (location) => location.userId.toString() === req.userId
@@ -137,8 +245,16 @@ async function getSuggestions(req, res) {
 
     res.json({
       centroid,
+      geometricMedian: centroid,
+      arithmeticCentroid,
       viewerLocation: viewerLocation
-        ? { lat: viewerLocation.lat, lng: viewerLocation.lng }
+        ? {
+          lat: viewerLocation.lat,
+          lng: viewerLocation.lng,
+          travelMode: TRAVEL_MODES.has(viewerLocation.travelMode)
+            ? viewerLocation.travelMode
+            : 'motorcycle',
+        }
         : null,
       placeCategories,
       searchRadiusMeters,
@@ -158,6 +274,11 @@ async function getSuggestions(req, res) {
         error: 'Dịch vụ tìm địa điểm đang tạm thời không khả dụng. Vui lòng thử lại sau.',
       });
     }
+    if (err.code === 'ROUTING_UNAVAILABLE') {
+      return res.status(503).json({
+        error: 'Dịch vụ tính thời gian di chuyển đang tạm thời không khả dụng. Vui lòng thử lại sau.',
+      });
+    }
     res.status(500).json({ error: 'Lỗi server khi tính gợi ý' });
   }
 }
@@ -175,9 +296,12 @@ async function getRouteToSuggestion(req, res) {
       return res.status(404).json({ error: 'Bạn chưa gửi vị trí trong nhóm này' });
     }
 
-    const route = await getMotorcycleRoute(
+    const route = await getRouteForMode(
       { lat: viewerLocation.lat, lng: viewerLocation.lng },
-      { lat, lng }
+      { lat, lng },
+      TRAVEL_MODES.has(viewerLocation.travelMode)
+        ? viewerLocation.travelMode
+        : 'motorcycle'
     );
     if (!route) {
       return res.status(404).json({ error: 'Không tìm được đường đi tới địa điểm này' });

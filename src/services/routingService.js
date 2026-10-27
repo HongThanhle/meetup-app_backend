@@ -1,14 +1,10 @@
 const axios = require('axios');
 
 const GEOAPIFY_ROUTING_URL = 'https://api.geoapify.com/v1/routing';
+const GEOAPIFY_MATRIX_URL = 'https://api.geoapify.com/v1/routematrix';
 const OSRM_ROUTING_URL = 'https://router.project-osrm.org/route/v1/driving';
+const OSRM_TABLE_URL = 'https://router.project-osrm.org/table/v1/driving';
 const REQUEST_TIMEOUT_MS = 12000;
-const URBAN_ESTIMATED_SPEED_KMH = 27.5;
-
-function estimateUrbanDurationSeconds(distanceMeters, providerDurationSeconds) {
-  const urbanDurationSeconds = (distanceMeters / 1000) / URBAN_ESTIMATED_SPEED_KMH * 3600;
-  return Math.max(providerDurationSeconds, urbanDurationSeconds);
-}
 
 function parseRoute(response, travelMode) {
   const route = response.data?.features?.[0];
@@ -34,10 +30,7 @@ function parseRoute(response, travelMode) {
   return {
     coordinates,
     distanceMeters: route.properties.distance,
-    durationSeconds: estimateUrbanDurationSeconds(
-      route.properties.distance,
-      route.properties.time
-    ),
+    durationSeconds: route.properties.time,
     travelMode,
   };
 }
@@ -58,7 +51,7 @@ async function requestRoute(start, destination, travelMode, apiKey) {
   return parseRoute(response, travelMode);
 }
 
-async function requestDrivingFallback(start, destination) {
+async function requestDrivingRoute(start, destination) {
   const coordinates = `${start.lng},${start.lat};${destination.lng},${destination.lat}`;
   const response = await axios.get(`${OSRM_ROUTING_URL}/${coordinates}`, {
     params: {
@@ -87,29 +80,118 @@ async function requestDrivingFallback(start, destination) {
   return {
     coordinates: route.geometry.coordinates,
     distanceMeters: route.distance,
-    durationSeconds: estimateUrbanDurationSeconds(route.distance, route.duration),
-    travelMode: 'drive-fallback',
+    durationSeconds: route.duration,
+    travelMode: 'drive',
   };
 }
 
-async function getMotorcycleRoute(start, destination) {
+async function getTravelTimeMatrix(sources, targets, travelMode) {
+  try {
+    if (travelMode === 'drive') {
+      const allPoints = [...sources, ...targets];
+      const coordinates = allPoints.map(({ lat, lng }) => `${lng},${lat}`).join(';');
+      const response = await axios.get(`${OSRM_TABLE_URL}/${coordinates}`, {
+        params: {
+          sources: sources.map((_, index) => index).join(';'),
+          destinations: targets.map((_, index) => sources.length + index).join(';'),
+          annotations: 'duration,distance',
+        },
+        timeout: REQUEST_TIMEOUT_MS,
+      });
+      const { durations, distances } = response.data || {};
+      if (
+        response.data?.code !== 'Ok'
+        || !Array.isArray(durations)
+        || durations.length !== sources.length
+        || !Array.isArray(distances)
+        || distances.length !== sources.length
+        || durations.some((row) => !Array.isArray(row) || row.length !== targets.length)
+        || distances.some((row) => !Array.isArray(row) || row.length !== targets.length)
+      ) {
+        throw new Error('OSRM Table trả về ma trận không hợp lệ');
+      }
+
+      return durations.map((row, sourceIndex) => row.map((durationSeconds, targetIndex) => (
+        Number.isFinite(durationSeconds) && Number.isFinite(distances[sourceIndex][targetIndex])
+          ? {
+            durationSeconds,
+            distanceMeters: distances[sourceIndex][targetIndex],
+          }
+          : null
+      )));
+    }
+
+    const apiKey = process.env.GEOAPIFY_API_KEY;
+    if (!apiKey) {
+      const error = new Error('Thiếu GEOAPIFY_API_KEY để tính thời gian di chuyển');
+      error.code = 'ROUTING_UNAVAILABLE';
+      throw error;
+    }
+
+    const response = await axios.post(
+      GEOAPIFY_MATRIX_URL,
+      {
+        mode: travelMode,
+        sources: sources.map(({ lat, lng }) => ({ location: [lng, lat] })),
+        targets: targets.map(({ lat, lng }) => ({ location: [lng, lat] })),
+      },
+      {
+        params: { apiKey },
+        timeout: REQUEST_TIMEOUT_MS,
+      }
+    );
+    const matrix = response.data?.matrix;
+    if (
+      !Array.isArray(matrix)
+      || matrix.length !== sources.length
+      || matrix.some((row) => !Array.isArray(row) || row.length !== targets.length)
+    ) {
+      throw new Error('Geoapify Matrix trả về ma trận không hợp lệ');
+    }
+
+    return matrix.map((row) => row.map((cell) => (
+      Number.isFinite(cell?.time) && Number.isFinite(cell?.distance)
+        ? { durationSeconds: cell.time, distanceMeters: cell.distance }
+        : null
+    )));
+  } catch (cause) {
+    console.error('Routing Matrix lỗi:', {
+      status: cause.response?.status,
+      message: cause.message,
+      details: cause.response?.data?.message || cause.response?.data?.error,
+      travelMode,
+    });
+    const error = new Error('Không thể tính ma trận thời gian di chuyển');
+    error.code = 'ROUTING_UNAVAILABLE';
+    throw error;
+  }
+}
+
+async function getRouteForMode(start, destination, travelMode) {
+  if (travelMode === 'drive') {
+    try {
+      return await requestDrivingRoute(start, destination);
+    } catch (cause) {
+      console.error('OSRM Routing lỗi:', {
+        status: cause.response?.status,
+        message: cause.message,
+        details: cause.response?.data?.message || cause.response?.data?.code,
+      });
+      return null;
+    }
+  }
+
   const apiKey = process.env.GEOAPIFY_API_KEY;
   if (apiKey) {
-    const modes = [
-      { requestMode: 'motorcycle', responseMode: 'motorcycle' },
-      { requestMode: 'scooter', responseMode: 'scooter' },
-    ];
-    for (const { requestMode, responseMode } of modes) {
+    const requestModes = travelMode === 'motorcycle'
+      ? ['motorcycle', 'scooter']
+      : [travelMode];
+    for (const requestMode of requestModes) {
       try {
         const route = await requestRoute(start, destination, requestMode, apiKey);
         if (route) {
-          route.travelMode = responseMode;
           return route;
         }
-
-        console.warn('Geoapify không tìm thấy tuyến cho profile:', {
-          travelMode: requestMode,
-        });
       } catch (cause) {
         console.error('Geoapify Routing lỗi:', {
           travelMode: requestMode,
@@ -120,25 +202,14 @@ async function getMotorcycleRoute(start, destination) {
       }
     }
   } else {
-    console.warn('Thiếu GEOAPIFY_API_KEY; bỏ qua Geoapify và thử tuyến ô tô dự phòng.');
-  }
-
-  try {
-    const fallbackRoute = await requestDrivingFallback(start, destination);
-    if (fallbackRoute) {
-      console.warn('Đang dùng tuyến ô tô OSRM thay cho tuyến xe máy.');
-      return fallbackRoute;
-    }
-    console.warn('OSRM không tìm thấy tuyến lái xe cho hai tọa độ đã chọn.');
-  } catch (cause) {
-    console.error('OSRM Routing lỗi:', {
-      status: cause.response?.status,
-      message: cause.message,
-      details: cause.response?.data?.message || cause.response?.data?.code,
-    });
+    console.warn('Thiếu GEOAPIFY_API_KEY; không thể dùng profile tuyến đường Geoapify.');
   }
 
   return null;
 }
 
-module.exports = { getMotorcycleRoute };
+async function getMotorcycleRoute(start, destination) {
+  return getRouteForMode(start, destination, 'motorcycle');
+}
+
+module.exports = { getMotorcycleRoute, getRouteForMode, getTravelTimeMatrix };

@@ -6,6 +6,11 @@ const locationSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     lat: { type: Number, required: true, min: -90, max: 90 },
     lng: { type: Number, required: true, min: -180, max: 180 },
+    travelMode: {
+      type: String,
+      enum: ['motorcycle', 'drive', 'walk'],
+      default: 'motorcycle',
+    },
     source: { type: String, enum: ['gps', 'manual'], required: true },
     rawAddress: { type: String, default: null, maxlength: 500 }, // chỉ có giá trị nếu source = 'manual'
   },
