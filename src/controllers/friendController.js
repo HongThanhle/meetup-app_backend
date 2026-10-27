@@ -7,6 +7,7 @@ const User = require('../models/User');
 const { emitToUser } = require('../realtime/socketHub');
 const { emitToGroupMembers } = require('../realtime/socketServer');
 const { createNotification, resolveNotification } = require('../services/notificationService');
+const { MAX_GROUP_MEMBERS } = require('../config/groupLimits');
 
 const requestAttempts = new Map();
 const inviteAttempts = new Map();
@@ -321,6 +322,9 @@ async function inviteFriendToGroup(req, res) {
       return res.status(403).json({ error: 'Bạn cần là thành viên nhóm mới có thể mời người khác' });
     }
     if (!recipient || !sender) return res.status(404).json({ error: 'Không tìm thấy tài khoản' });
+    if (group.members.length >= MAX_GROUP_MEMBERS) {
+      return res.status(409).json({ error: `Nhóm đã đầy (${MAX_GROUP_MEMBERS} thành viên tối đa)` });
+    }
     if (group.members.some((member) => String(member.userId) === String(toUserId))) {
       return res.status(409).json({ error: 'Người này đã ở trong nhóm' });
     }
@@ -443,20 +447,31 @@ async function respondToRoomInvite(req, res) {
     if (decision === 'accepted') {
       try {
         const result = await Group.updateOne(
-          { _id: group._id, 'members.userId': { $ne: req.userId } },
-          { $push: { members: { userId: req.userId, name: user.name } } }
+          {
+            _id: group._id,
+            'members.userId': { $ne: req.userId },
+            $expr: { $lt: [{ $size: '$members' }, MAX_GROUP_MEMBERS] },
+          },
+          { $push: { members: { userId: req.userId, name: user.name } }, $unset: { suggestionCache: 1 } }
         );
         if (result.matchedCount === 0) {
           const currentGroup = await Group.findOne({
             _id: group._id,
-            'members.userId': req.userId,
-          }).select('_id');
+          }).select('_id members');
           if (!currentGroup) {
             await RoomInvite.updateOne(
               { _id: invite._id, status: 'accepted' },
               { $set: { status: 'pending' } }
             );
             return res.status(404).json({ error: 'Nhóm không còn tồn tại' });
+          }
+          const alreadyJoined = currentGroup.members.some((member) => String(member.userId) === String(req.userId));
+          if (!alreadyJoined) {
+            await RoomInvite.updateOne(
+              { _id: invite._id, status: 'accepted' },
+              { $set: { status: 'pending' } }
+            );
+            return res.status(409).json({ error: `Nhóm đã đầy (${MAX_GROUP_MEMBERS} thành viên tối đa)` });
           }
         }
       } catch (error) {
@@ -471,6 +486,7 @@ async function respondToRoomInvite(req, res) {
         userId: String(req.userId),
         name: user.name,
       });
+      await emitToGroupMembers(group._id, 'group:updated', { groupId: String(group._id), reason: 'member_joined' });
     }
 
     await resolveNotification({

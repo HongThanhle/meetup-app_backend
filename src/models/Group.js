@@ -17,6 +17,16 @@ const groupSchema = new mongoose.Schema({
     default: () => [...DEFAULT_PLACE_CATEGORIES],
   },
   placeCategoriesLocked: { type: Boolean, default: false },
+  suggestionCache: {
+    generatedAt: Date,
+    places: [{
+      placeId: { type: String, required: true },
+      name: { type: String, required: true },
+      lat: { type: Number, required: true },
+      lng: { type: Number, required: true },
+      address: { type: String },
+    }],
+  },
   // --- Thêm cho tính năng vote ---
   finalizedPlace: {
     placeId: String,

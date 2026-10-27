@@ -21,13 +21,14 @@ const {
   finalizeManually,
 } = require('../controllers/voteController');
 const { listMyMeetupHistory } = require('../controllers/historyController');
+const { joinGroupRateLimit } = require('../middleware/rateLimits');
 
 router.use(verifyToken);
 
 router.get('/', getMyGroups);
 router.get('/history', listMyMeetupHistory);
 router.post('/', createGroup);
-router.post('/join', joinGroup);
+router.post('/join', joinGroupRateLimit, joinGroup);
 router.get('/:groupId/status', requireGroupMember, getGroupStatus);
 router.put('/:groupId/place-categories', requireGroupMember, updatePlaceCategories);
 router.post('/:groupId/leave', requireGroupMember, leaveGroup);

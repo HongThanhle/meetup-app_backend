@@ -1,3 +1,4 @@
+const { randomInt } = require('crypto');
 const Group = require('../models/Group');
 const Location = require('../models/Location');
 const User = require('../models/User');
@@ -8,13 +9,15 @@ const {
   PLACE_CATEGORIES,
   PLACE_CATEGORY_IDS,
 } = require('../services/placeCategories');
+const { MAX_GROUP_MEMBERS } = require('../config/groupLimits');
+const { emitToGroupMembers } = require('../realtime/socketServer');
 
 // Sinh mã mời ngẫu nhiên 6 ký tự, chỉ chữ hoa + số, tránh ký tự dễ nhầm (0/O, 1/I)
 function generateInviteCode() {
   const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+    code += chars.charAt(randomInt(chars.length));
   }
   return code;
 }
@@ -77,12 +80,29 @@ async function joinGroup(req, res) {
 
     const alreadyMember = group.members.some((m) => m.userId && m.userId.toString() === req.userId);
     if (!alreadyMember) {
+      if (group.members.length >= MAX_GROUP_MEMBERS) {
+        return res.status(409).json({ error: `Nhóm đã đầy (${MAX_GROUP_MEMBERS} thành viên tối đa)` });
+      }
       const user = await User.findById(req.userId);
       if (!user) {
         return res.status(401).json({ error: 'Tài khoản không tồn tại' });
       }
-      group.members.push({ userId: req.userId, name: user.name });
-      await group.save();
+      const joinedGroup = await Group.findOneAndUpdate(
+        {
+          _id: group._id,
+          'members.userId': { $ne: req.userId },
+          $expr: { $lt: [{ $size: '$members' }, MAX_GROUP_MEMBERS] },
+        },
+        { $push: { members: { userId: req.userId, name: user.name } }, $unset: { suggestionCache: 1 } },
+        { new: true }
+      );
+      if (!joinedGroup) {
+        const currentGroup = await Group.findById(group._id).select('members');
+        if (!currentGroup?.members.some((member) => String(member.userId) === String(req.userId))) {
+          return res.status(409).json({ error: `Nhóm đã đầy (${MAX_GROUP_MEMBERS} thành viên tối đa)` });
+        }
+      }
+      await emitToGroupMembers(group._id, 'group:updated', { groupId: String(group._id), reason: 'member_joined' });
     }
 
     res.json({ groupId: group._id, groupName: group.groupName });
@@ -157,13 +177,15 @@ async function updatePlaceCategories(req, res) {
         placeCategoriesLocked: { $ne: true },
         'finalizedPlace.placeId': { $exists: false },
       },
-      { $set: { placeCategories: categories } },
+      { $set: { placeCategories: categories }, $unset: { suggestionCache: 1 } },
       { new: true }
     );
 
     if (!updatedGroup) {
       return res.status(409).json({ error: 'Đã có bình chọn hoặc nhóm đã chốt, không thể đổi loại địa điểm' });
     }
+
+    await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'categories' });
 
     res.json({
       placeCategories: updatedGroup.placeCategories,
@@ -199,6 +221,7 @@ async function leaveGroup(req, res) {
     const isLeader = group.createdBy.toString() === req.userId;
 
     if (remainingMembers.length === 0) {
+      await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'member_left' });
       await Location.deleteMany({ groupId });
       await Vote.deleteMany({ groupId });
       await group.deleteOne();
@@ -214,9 +237,11 @@ async function leaveGroup(req, res) {
     }
 
     group.members = remainingMembers;
+    group.set('suggestionCache', undefined);
     await group.save();
     await Location.deleteOne({ groupId, userId: req.userId });
     await Vote.deleteOne({ groupId, userId: req.userId });
+    await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'member_left' });
 
     res.json({
       message: isLeader

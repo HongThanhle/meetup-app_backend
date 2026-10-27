@@ -1,5 +1,7 @@
 const Location = require('../models/Location');
 const Vote = require('../models/Vote');
+const Group = require('../models/Group');
+const { emitToGroupMembers } = require('../realtime/socketServer');
 const { geocode, reverseGeocode } = require('../services/geocodeService');
 const { findPlacesNearby } = require('../services/placesService');
 const {
@@ -102,6 +104,9 @@ async function submitLocation(req, res) {
       },
       { new: true, upsert: true }
     );
+
+    await Group.updateOne({ _id: groupId }, { $unset: { suggestionCache: 1 } });
+    await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'location' });
 
     res.json(location);
   } catch (err) {
@@ -232,6 +237,14 @@ async function getSuggestions(req, res) {
     const viewerLocation = locations.find(
       (location) => location.userId.toString() === req.userId
     );
+
+    req.group.suggestionCache = {
+      generatedAt: new Date(),
+      places: ranked.map(({ id, name, lat, lng, address }) => ({
+        placeId: String(id), name, lat, lng, address,
+      })),
+    };
+    await req.group.save();
 
     res.json({
       centroid,

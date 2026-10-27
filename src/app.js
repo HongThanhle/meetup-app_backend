@@ -7,10 +7,13 @@ const geocodeRoutes = require('./routes/geocodeRoutes');
 const reverseGeocodeRoutes = require('./routes/reverseGeocodeRoutes');
 const friendRoutes = require('./routes/friendRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 
 const app = express();
 
+// The deployed API sits behind one reverse proxy; use the forwarded client IP for rate limits.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 
@@ -24,5 +27,7 @@ app.use('/friends', friendRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/geocode-preview', geocodeRoutes);
 app.use('/reverse-geocode', reverseGeocodeRoutes);
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 module.exports = app;

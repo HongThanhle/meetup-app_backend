@@ -2,6 +2,22 @@ const Vote = require('../models/Vote');
 const Group = require('../models/Group');
 const MeetupHistory = require('../models/MeetupHistory');
 const { isNonEmptyString, isValidCoordinate } = require('../middleware/validation');
+const { emitToGroupMembers } = require('../realtime/socketServer');
+
+function getSelectedSuggestion(group, placeId, placeName, lat, lng) {
+  const generatedAt = group.suggestionCache?.generatedAt;
+  if (
+    !generatedAt
+    || !Array.isArray(group.suggestionCache?.places)
+    || Date.now() - new Date(generatedAt).getTime() > 60 * 60 * 1000
+  ) return null;
+  return group.suggestionCache.places.find((place) => (
+    place.placeId === placeId
+    && place.name === placeName.trim()
+    && Math.abs(place.lat - lat) <= 0.00001
+    && Math.abs(place.lng - lng) <= 0.00001
+  )) || null;
+}
 
 // Bình chọn / đổi vote
 async function castVote(req, res) {
@@ -19,9 +35,13 @@ async function castVote(req, res) {
       return res.status(400).json({ error: 'Thiếu thông tin địa điểm để bình chọn' });
     }
 
-    const group = await Group.findById(groupId);
+    const group = req.group || await Group.findById(groupId);
     if (!group) {
       return res.status(404).json({ error: 'Không tìm thấy nhóm' });
+    }
+    const selectedPlace = getSelectedSuggestion(group, placeId, placeName, lat, lng);
+    if (!selectedPlace) {
+      return res.status(409).json({ error: 'Gợi ý đã cũ hoặc không hợp lệ. Hãy tải lại danh sách gợi ý.' });
     }
 
     const lockedGroup = await Group.findOneAndUpdate(
@@ -45,12 +65,13 @@ async function castVote(req, res) {
     } else {
       await Vote.findOneAndUpdate(
         { groupId, userId },
-        { placeId, placeName, lat, lng },
+        { placeId, placeName: selectedPlace.name, lat: selectedPlace.lat, lng: selectedPlace.lng },
         { upsert: true, new: true }
       );
     }
 
     const result = await getVoteTally(lockedGroup, userId);
+    await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'vote' });
     res.json(result);
   } catch (err) {
     console.error('Lỗi khi bình chọn:', err);
@@ -90,16 +111,20 @@ async function finalizeManually(req, res) {
     ) {
       return res.status(400).json({ error: 'Thông tin điểm hẹn không hợp lệ' });
     }
+    const selectedPlace = getSelectedSuggestion(group, placeId, placeName, lat, lng);
+    if (!selectedPlace) {
+      return res.status(409).json({ error: 'Gợi ý đã cũ hoặc không hợp lệ. Hãy tải lại danh sách gợi ý.' });
+    }
     if (group.finalizedPlace?.placeId && group.finalizedPlace.placeId !== placeId) {
       return res.status(409).json({ error: 'Nhóm đã chốt điểm hẹn' });
     }
 
     const finalizedPlace = {
       placeId,
-      name: placeName.trim(),
-      lat,
-      lng,
-      address: address?.trim() || undefined,
+      name: selectedPlace.name,
+      lat: selectedPlace.lat,
+      lng: selectedPlace.lng,
+      address: selectedPlace.address || undefined,
     };
     const finalizedAt = group.finalizedAt || new Date();
     const finalizedGroup = await Group.findOneAndUpdate(
@@ -147,6 +172,7 @@ async function finalizeManually(req, res) {
       { upsert: true }
     );
 
+    await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'finalized' });
     res.json({ finalizedPlace: savedPlace, finalizedAt: savedAt });
   } catch (err) {
     console.error('Lỗi khi chốt điểm hẹn:', err);
