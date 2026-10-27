@@ -183,9 +183,7 @@ async function getRouteForMode(start, destination, travelMode) {
 
   const apiKey = process.env.GEOAPIFY_API_KEY;
   if (apiKey) {
-    const requestModes = travelMode === 'motorcycle'
-      ? ['motorcycle', 'scooter']
-      : [travelMode];
+    const requestModes = travelMode === 'motorcycle' ? ['scooter'] : [travelMode];
     for (const requestMode of requestModes) {
       try {
         const route = await requestRoute(start, destination, requestMode, apiKey);
@@ -203,6 +201,21 @@ async function getRouteForMode(start, destination, travelMode) {
     }
   } else {
     console.warn('Thiếu GEOAPIFY_API_KEY; không thể dùng profile tuyến đường Geoapify.');
+  }
+
+  if (travelMode === 'motorcycle') {
+    try {
+      const fallbackRoute = await requestDrivingRoute(start, destination);
+      if (fallbackRoute) {
+        return { ...fallbackRoute, travelMode: 'drive-fallback' };
+      }
+    } catch (cause) {
+      console.error('OSRM Routing dự phòng lỗi:', {
+        status: cause.response?.status,
+        message: cause.message,
+        details: cause.response?.data?.message || cause.response?.data?.code,
+      });
+    }
   }
 
   return null;
