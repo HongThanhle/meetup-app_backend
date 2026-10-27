@@ -131,7 +131,7 @@ async function getTravelTimeMatrix(sources, targets, travelMode) {
     const response = await axios.post(
       GEOAPIFY_MATRIX_URL,
       {
-        mode: travelMode,
+        mode: travelMode === 'motorcycle' ? 'scooter' : travelMode,
         sources: sources.map(({ lat, lng }) => ({ location: [lng, lat] })),
         targets: targets.map(({ lat, lng }) => ({ location: [lng, lat] })),
       },
@@ -140,7 +140,7 @@ async function getTravelTimeMatrix(sources, targets, travelMode) {
         timeout: REQUEST_TIMEOUT_MS,
       }
     );
-    const matrix = response.data?.matrix;
+    const matrix = response.data?.sources_to_targets || response.data?.matrix;
     if (
       !Array.isArray(matrix)
       || matrix.length !== sources.length
