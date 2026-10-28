@@ -118,7 +118,10 @@ async function getGroupStatus(req, res) {
     const group = req.group;
 
     // Lấy danh sách userId đã gửi vị trí trong nhóm này
-    const locations = await Location.find({ groupId }).select('userId');
+    const [locations, voteCount] = await Promise.all([
+      Location.find({ groupId }).select('userId'),
+      Vote.countDocuments({ groupId }),
+    ]);
     const submittedIds = new Set(locations.map((l) => l.userId.toString()));
 
     const members = group.members.map((m) => ({
@@ -131,6 +134,7 @@ async function getGroupStatus(req, res) {
     res.json({
       groupName: group.groupName,
       members,
+      voteCount,
       finalizedPlace: group.finalizedPlace?.placeId ? group.finalizedPlace : null,
     });
   } catch (err) {
