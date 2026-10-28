@@ -5,6 +5,7 @@ const GEOAPIFY_MATRIX_URL = 'https://api.geoapify.com/v1/routematrix';
 const OSRM_ROUTING_URL = 'https://router.project-osrm.org/route/v1/driving';
 const OSRM_TABLE_URL = 'https://router.project-osrm.org/table/v1/driving';
 const REQUEST_TIMEOUT_MS = 12000;
+const ROUTE_REQUEST_TIMEOUT_MS = 8000;
 
 function parseRoute(response, travelMode) {
   const route = response.data?.features?.[0];
@@ -45,7 +46,7 @@ async function requestRoute(start, destination, travelMode, apiKey) {
       format: 'geojson',
       apiKey,
     },
-    timeout: REQUEST_TIMEOUT_MS,
+    timeout: ROUTE_REQUEST_TIMEOUT_MS,
   });
 
   return parseRoute(response, travelMode);
@@ -59,7 +60,7 @@ async function requestDrivingRoute(start, destination) {
       geometries: 'geojson',
       steps: false,
     },
-    timeout: REQUEST_TIMEOUT_MS,
+    timeout: ROUTE_REQUEST_TIMEOUT_MS,
   });
   const route = response.data?.routes?.[0];
   if (
