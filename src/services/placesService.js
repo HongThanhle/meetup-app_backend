@@ -34,6 +34,10 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
 
     return (response.data?.features || []).flatMap((feature) => {
       const properties = feature.properties || {};
+      const rawImage = properties.datasource?.raw?.image;
+      const imageUrl = typeof rawImage === 'string' && /^https?:\/\//i.test(rawImage)
+        ? rawImage
+        : null;
       const matchingCategory = (properties.categories || []).find((category) => (
         [...selectedCategories].some((selected) => (
           category === selected || category.startsWith(`${selected}.`)
@@ -61,6 +65,7 @@ async function findPlacesNearby(lat, lng, categories, radiusMeters = 1500) {
         lat: coordinates[1],
         lng: coordinates[0],
         address,
+        imageUrl,
         type: categoryTypes.get(matchingCategory)
           || PLACE_CATEGORIES.find(({ id }) => matchingCategory.startsWith(`${id}.`))?.type
           || 'Địa điểm',

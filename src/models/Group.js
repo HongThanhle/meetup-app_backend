@@ -3,6 +3,8 @@ const { DEFAULT_PLACE_CATEGORIES } = require('../services/placeCategories');
 
 const groupSchema = new mongoose.Schema({
   groupName: { type: String, required: true },
+  groupType: { type: String, enum: ['coffee', 'food', 'movie', 'other'], default: 'other' },
+  scheduledAt: { type: Date, default: null },
   inviteCode: { type: String, required: true, unique: true },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   members: [
@@ -25,6 +27,7 @@ const groupSchema = new mongoose.Schema({
       lat: { type: Number, required: true },
       lng: { type: Number, required: true },
       address: { type: String },
+      imageUrl: { type: String },
     }],
   },
   // --- Thêm cho tính năng vote ---
@@ -34,6 +37,7 @@ const groupSchema = new mongoose.Schema({
     lat: Number,
     lng: Number,
     address: String,
+    imageUrl: String,
   },
   finalizedAt: Date,
 }, { timestamps: true });

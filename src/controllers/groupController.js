@@ -25,6 +25,12 @@ function generateInviteCode() {
 async function createGroup(req, res) {
   try {
     const { groupName } = req.body;
+    const allowedGroupTypes = new Set(['coffee', 'food', 'movie', 'other']);
+    const groupType = allowedGroupTypes.has(req.body.groupType) ? req.body.groupType : 'other';
+    const scheduledAt = req.body.scheduledAt == null ? null : new Date(req.body.scheduledAt);
+    if (scheduledAt && (!Number.isFinite(scheduledAt.getTime()) || scheduledAt <= new Date())) {
+      return res.status(400).json({ error: 'Thời gian cuộc hẹn phải nằm trong tương lai' });
+    }
     if (!isNonEmptyString(groupName, 100)) {
       return res.status(400).json({ error: 'Tên nhóm không hợp lệ' });
     }
@@ -45,6 +51,8 @@ async function createGroup(req, res) {
 
     const group = await Group.create({
       groupName: groupName.trim(),
+      groupType,
+      scheduledAt,
       inviteCode,
       createdBy: req.userId,
       members: [{ userId: req.userId, name: user.name }],
@@ -53,6 +61,8 @@ async function createGroup(req, res) {
     res.status(201).json({
       groupId: group._id,
       groupName: group.groupName,
+      groupType: group.groupType,
+      scheduledAt: group.scheduledAt,
       inviteCode: group.inviteCode,
     });
   } catch (err) {
@@ -204,12 +214,72 @@ async function updatePlaceCategories(req, res) {
 async function getMyGroups(req, res) {
   try {
     const groups = await Group.find({ 'members.userId': req.userId }).sort({ createdAt: -1 });
-    const result = groups.map((g) => ({
-      groupId: g._id,
-      groupName: g.groupName,
-      inviteCode: g.inviteCode,
-      memberCount: g.members.length,
-    }));
+    const groupIds = groups.map((group) => group._id);
+    const [locations, votes] = await Promise.all([
+      Location.find({ groupId: { $in: groupIds } }).select('groupId userId'),
+      Vote.find({ groupId: { $in: groupIds } }).select('groupId userId'),
+    ]);
+    const locationsByGroup = new Map();
+    const votesByGroup = new Map();
+    locations.forEach((item) => {
+      const key = String(item.groupId);
+      if (!locationsByGroup.has(key)) locationsByGroup.set(key, new Set());
+      locationsByGroup.get(key).add(String(item.userId));
+    });
+    votes.forEach((item) => {
+      const key = String(item.groupId);
+      if (!votesByGroup.has(key)) votesByGroup.set(key, new Set());
+      votesByGroup.get(key).add(String(item.userId));
+    });
+    const result = groups.map((group) => {
+      const id = String(group._id);
+      const submitted = locationsByGroup.get(id) || new Set();
+      const voted = votesByGroup.get(id) || new Set();
+      const hasFinalizedPlace = Boolean(group.finalizedPlace?.placeId);
+      const allSubmitted = group.members.every((member) => submitted.has(String(member.userId)));
+      const currentUserSubmitted = submitted.has(String(req.userId));
+      const currentUserVoted = voted.has(String(req.userId));
+      let statusLabel = 'Chờ vị trí';
+      let nextAction = currentUserSubmitted ? 'Chờ mọi người chia sẻ vị trí' : 'Chia sẻ vị trí của bạn';
+      let actionRequired = !currentUserSubmitted;
+      if (hasFinalizedPlace) {
+        statusLabel = 'Đã chốt';
+        nextAction = group.finalizedPlace.name || 'Mở địa điểm đã chốt';
+        actionRequired = false;
+      } else if (allSubmitted && !currentUserVoted) {
+        statusLabel = 'Đang bình chọn';
+        nextAction = 'Chọn địa điểm bạn thích';
+        actionRequired = true;
+      } else if (allSubmitted) {
+        statusLabel = 'Đang bình chọn';
+        nextAction = 'Chờ nhóm chốt địa điểm';
+        actionRequired = false;
+      } else if (currentUserSubmitted) {
+        const remaining = group.members.length - submitted.size;
+        nextAction = `Còn ${remaining} người chưa chia sẻ vị trí`;
+        actionRequired = false;
+      }
+      return {
+        groupId: group._id,
+        groupName: group.groupName,
+        groupType: group.groupType || 'other',
+        scheduledAt: group.scheduledAt || null,
+        inviteCode: group.inviteCode,
+        memberCount: group.members.length,
+        members: group.members.map((member) => ({
+          userId: String(member.userId),
+          name: member.name,
+        })),
+        statusLabel,
+        nextAction,
+        actionRequired,
+        submittedCount: submitted.size,
+        voteCount: voted.size,
+        finalizedPlace: hasFinalizedPlace ? group.finalizedPlace : null,
+        createdAt: group.createdAt,
+      };
+    }).sort((first, second) => Number(second.actionRequired) - Number(first.actionRequired)
+      || new Date(second.createdAt) - new Date(first.createdAt));
     res.json({ groups: result });
   } catch (err) {
     console.error('Lỗi lấy danh sách nhóm:', err);

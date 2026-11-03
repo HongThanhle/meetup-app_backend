@@ -125,6 +125,7 @@ async function finalizeManually(req, res) {
       lat: selectedPlace.lat,
       lng: selectedPlace.lng,
       address: selectedPlace.address || undefined,
+      imageUrl: selectedPlace.imageUrl || undefined,
     };
     const finalizedAt = group.finalizedAt || new Date();
     const finalizedGroup = await Group.findOneAndUpdate(

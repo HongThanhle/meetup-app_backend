@@ -240,8 +240,8 @@ async function getSuggestions(req, res) {
 
     req.group.suggestionCache = {
       generatedAt: new Date(),
-      places: ranked.map(({ id, name, lat, lng, address }) => ({
-        placeId: String(id), name, lat, lng, address,
+      places: ranked.map(({ id, name, lat, lng, address, imageUrl }) => ({
+        placeId: String(id), name, lat, lng, address, imageUrl,
       })),
     };
     await req.group.save();
