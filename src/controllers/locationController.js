@@ -163,7 +163,13 @@ async function getSuggestions(req, res) {
       req.group.placeCategories = placeCategories;
       await req.group.save();
     }
-    const searchRadiusMeters = getPlaceSearchRadius(placeCategories);
+    const defaultSearchRadiusMeters = getPlaceSearchRadius(placeCategories);
+    const allowedSearchRadii = new Set([1500, 3000, 5000]);
+    const requestedRadius = req.query.radius == null ? defaultSearchRadiusMeters : Number(req.query.radius);
+    if (!allowedSearchRadii.has(requestedRadius)) {
+      return res.status(400).json({ error: 'Bán kính tìm kiếm không hợp lệ' });
+    }
+    const searchRadiusMeters = Math.max(defaultSearchRadiusMeters, requestedRadius);
     const places = await findPlacesNearby(
       centroid.lat,
       centroid.lng,
