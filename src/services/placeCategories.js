@@ -9,6 +9,12 @@ const PLACE_CATEGORIES = [
 ];
 
 const DEFAULT_PLACE_CATEGORIES = ['catering.cafe', 'catering.restaurant'];
+const GROUP_TYPE_PLACE_CATEGORIES = {
+  coffee: ['catering.cafe'],
+  food: ['catering.restaurant', 'catering.fast_food', 'commercial.food_and_drink.bakery', 'catering.ice_cream'],
+  movie: ['entertainment.cinema'],
+  other: DEFAULT_PLACE_CATEGORIES,
+};
 const PLACE_CATEGORY_IDS = new Set(PLACE_CATEGORIES.map(({ id }) => id));
 const LEGACY_PLACE_CATEGORY_IDS = new Map([
   ['catering.bakery', 'commercial.food_and_drink.bakery'],
@@ -22,9 +28,14 @@ function getPlaceSearchRadius(categories) {
   return categories.includes('entertainment.cinema') ? 5000 : 1500;
 }
 
+function getDefaultPlaceCategoriesForGroupType(groupType) {
+  return [...(GROUP_TYPE_PLACE_CATEGORIES[groupType] || DEFAULT_PLACE_CATEGORIES)];
+}
+
 module.exports = {
   PLACE_CATEGORIES,
   DEFAULT_PLACE_CATEGORIES,
+  getDefaultPlaceCategoriesForGroupType,
   PLACE_CATEGORY_IDS,
   normalizePlaceCategories,
   getPlaceSearchRadius,

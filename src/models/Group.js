@@ -2,7 +2,8 @@ const mongoose = require('mongoose');
 const { DEFAULT_PLACE_CATEGORIES } = require('../services/placeCategories');
 
 const groupSchema = new mongoose.Schema({
-  groupName: { type: String, required: true },
+  groupName: { type: String, required: true, trim: true, maxlength: 50 },
+  creationRequestId: { type: String, default: undefined },
   groupType: { type: String, enum: ['coffee', 'food', 'movie', 'other'], default: 'other' },
   scheduledAt: { type: Date, default: null },
   inviteCode: { type: String, required: true, unique: true },
@@ -41,5 +42,10 @@ const groupSchema = new mongoose.Schema({
   },
   finalizedAt: Date,
 }, { timestamps: true });
+
+groupSchema.index(
+  { createdBy: 1, creationRequestId: 1 },
+  { unique: true, partialFilterExpression: { creationRequestId: { $type: 'string' } } }
+);
 
 module.exports = mongoose.model('Group', groupSchema);

@@ -8,6 +8,7 @@ const {
   DEFAULT_PLACE_CATEGORIES,
   PLACE_CATEGORIES,
   PLACE_CATEGORY_IDS,
+  getDefaultPlaceCategoriesForGroupType,
 } = require('../services/placeCategories');
 const { MAX_GROUP_MEMBERS } = require('../config/groupLimits');
 const { emitToGroupMembers } = require('../realtime/socketServer');
@@ -27,11 +28,27 @@ async function createGroup(req, res) {
     const { groupName } = req.body;
     const allowedGroupTypes = new Set(['coffee', 'food', 'movie', 'other']);
     const groupType = allowedGroupTypes.has(req.body.groupType) ? req.body.groupType : 'other';
+    const creationRequestId = req.get('Idempotency-Key');
+    if (creationRequestId && !/^[\w-]{8,100}$/.test(creationRequestId)) {
+      return res.status(400).json({ error: 'Mã yêu cầu tạo nhóm không hợp lệ' });
+    }
+    if (creationRequestId) {
+      const priorGroup = await Group.findOne({ createdBy: req.userId, creationRequestId });
+      if (priorGroup) {
+        return res.status(200).json({
+          groupId: priorGroup._id,
+          groupName: priorGroup.groupName,
+          groupType: priorGroup.groupType,
+          scheduledAt: priorGroup.scheduledAt,
+          inviteCode: priorGroup.inviteCode,
+        });
+      }
+    }
     const scheduledAt = req.body.scheduledAt == null ? null : new Date(req.body.scheduledAt);
     if (scheduledAt && (!Number.isFinite(scheduledAt.getTime()) || scheduledAt <= new Date())) {
       return res.status(400).json({ error: 'Thời gian cuộc hẹn phải nằm trong tương lai' });
     }
-    if (!isNonEmptyString(groupName, 100)) {
+    if (!isNonEmptyString(groupName, 50)) {
       return res.status(400).json({ error: 'Tên nhóm không hợp lệ' });
     }
 
@@ -50,9 +67,11 @@ async function createGroup(req, res) {
     }
 
     const group = await Group.create({
-      groupName: groupName.trim(),
+      groupName: groupName.trim().replace(/\s+/g, ' '),
+      creationRequestId,
       groupType,
       scheduledAt,
+      placeCategories: getDefaultPlaceCategoriesForGroupType(groupType),
       inviteCode,
       createdBy: req.userId,
       members: [{ userId: req.userId, name: user.name }],
@@ -66,6 +85,18 @@ async function createGroup(req, res) {
       inviteCode: group.inviteCode,
     });
   } catch (err) {
+    if (err?.code === 11000 && req.get('Idempotency-Key')) {
+      const priorGroup = await Group.findOne({ createdBy: req.userId, creationRequestId: req.get('Idempotency-Key') });
+      if (priorGroup) {
+        return res.status(200).json({
+          groupId: priorGroup._id,
+          groupName: priorGroup.groupName,
+          groupType: priorGroup.groupType,
+          scheduledAt: priorGroup.scheduledAt,
+          inviteCode: priorGroup.inviteCode,
+        });
+      }
+    }
     console.error('Lỗi tạo nhóm:', err);
     res.status(500).json({ error: 'Lỗi server khi tạo nhóm' });
   }
