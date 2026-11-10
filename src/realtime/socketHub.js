@@ -9,4 +9,9 @@ function emitToUser(userId, event, payload) {
   io.to(`user:${String(userId)}`).emit(event, payload);
 }
 
-module.exports = { setSocketServer, emitToUser };
+function disconnectUser(userId) {
+  if (!io) return;
+  io.in(`user:${String(userId)}`).disconnectSockets(true);
+}
+
+module.exports = { setSocketServer, emitToUser, disconnectUser };

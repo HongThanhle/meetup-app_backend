@@ -236,9 +236,20 @@ async function getSuggestions(req, res) {
           travelTimes,
           travelTimeSpreadSeconds,
           averageTravelTimeSeconds,
+          hasCompleteRoutes,
         };
       })
-      .sort((a, b) => a.distance - b.distance);
+      .sort((first, second) => {
+        if (first.hasCompleteRoutes !== second.hasCompleteRoutes) {
+          return first.hasCompleteRoutes ? -1 : 1;
+        }
+        if (first.hasCompleteRoutes && second.hasCompleteRoutes) {
+          const firstFairnessScore = first.averageTravelTimeSeconds + first.travelTimeSpreadSeconds * 0.5;
+          const secondFairnessScore = second.averageTravelTimeSeconds + second.travelTimeSpreadSeconds * 0.5;
+          if (firstFairnessScore !== secondFairnessScore) return firstFairnessScore - secondFairnessScore;
+        }
+        return first.distance - second.distance;
+      });
 
     const viewerLocation = locations.find(
       (location) => location.userId.toString() === req.userId
@@ -300,6 +311,15 @@ async function getRouteToSuggestion(req, res) {
       return res.status(400).json({ error: 'Tọa độ điểm đến không hợp lệ' });
     }
 
+    const cacheTime = new Date(req.group.suggestionCache?.generatedAt || 0).getTime();
+    const selectedSuggestion = req.group.suggestionCache?.places?.find((place) => (
+      Math.abs(place.lat - lat) <= 0.00001
+      && Math.abs(place.lng - lng) <= 0.00001
+    ));
+    if (!selectedSuggestion || !Number.isFinite(cacheTime) || Date.now() - cacheTime > 60 * 60 * 1000) {
+      return res.status(409).json({ error: 'Địa điểm không còn trong danh sách gợi ý. Hãy tải lại danh sách.' });
+    }
+
     const viewerLocation = await Location.findOne({ groupId, userId: req.userId });
     if (!viewerLocation) {
       return res.status(404).json({ error: 'Bạn chưa gửi vị trí trong nhóm này' });
@@ -307,7 +327,7 @@ async function getRouteToSuggestion(req, res) {
 
     const route = await getRouteForMode(
       { lat: viewerLocation.lat, lng: viewerLocation.lng },
-      { lat, lng },
+      { lat: selectedSuggestion.lat, lng: selectedSuggestion.lng },
       TRAVEL_MODES.has(viewerLocation.travelMode)
         ? viewerLocation.travelMode
         : 'motorcycle'

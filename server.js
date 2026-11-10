@@ -7,6 +7,15 @@ const { initializeSocketServer } = require('./src/realtime/socketServer');
 
 const PORT = process.env.PORT || 5000;
 
+if (typeof process.env.JWT_SECRET !== 'string' || process.env.JWT_SECRET.length < 32) {
+  console.error('JWT_SECRET phải có ít nhất 32 ký tự trước khi khởi động máy chủ.');
+  process.exit(1);
+}
+if (process.env.NODE_ENV === 'production' && !process.env.CORS_ORIGINS) {
+  console.error('CORS_ORIGINS cần chứa domain website đã phát hành khi chạy production.');
+  process.exit(1);
+}
+
 connectDB().then(() => {
   Presence.updateMany({ status: 'online' }, { $set: { status: 'offline' } })
     .then(() => {

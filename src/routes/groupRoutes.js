@@ -21,20 +21,20 @@ const {
   finalizeManually,
 } = require('../controllers/voteController');
 const { listMyMeetupHistory } = require('../controllers/historyController');
-const { joinGroupRateLimit } = require('../middleware/rateLimits');
+const { joinGroupRateLimit, createGroupRateLimit, expensiveRequestRateLimit } = require('../middleware/rateLimits');
 
 router.use(verifyToken);
 
 router.get('/', getMyGroups);
 router.get('/history', listMyMeetupHistory);
-router.post('/', createGroup);
+router.post('/', createGroupRateLimit, createGroup);
 router.post('/join', joinGroupRateLimit, joinGroup);
 router.get('/:groupId/status', requireGroupMember, getGroupStatus);
 router.put('/:groupId/place-categories', requireGroupMember, updatePlaceCategories);
 router.post('/:groupId/leave', requireGroupMember, leaveGroup);
 router.post('/:groupId/location', requireGroupMember, submitLocation);
-router.get('/:groupId/suggest', requireGroupMember, getSuggestions);
-router.post('/:groupId/route', requireGroupMember, getRouteToSuggestion);
+router.get('/:groupId/suggest', requireGroupMember, expensiveRequestRateLimit, getSuggestions);
+router.post('/:groupId/route', requireGroupMember, expensiveRequestRateLimit, getRouteToSuggestion);
 
 // --- Vote ---
 router.post('/:groupId/vote', requireGroupMember, castVote);

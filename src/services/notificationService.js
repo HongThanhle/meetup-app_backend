@@ -1,5 +1,6 @@
 const Notification = require('../models/Notification');
 const { emitToUser } = require('../realtime/socketHub');
+const { sendPushToUser } = require('./pushService');
 
 const ACTIONABLE_TYPES = new Set(['friend_request', 'room_invite']);
 
@@ -24,6 +25,9 @@ function serializeNotification(notification) {
 async function createNotification(details) {
   const notification = await Notification.create(details);
   emitToUser(details.userId, 'notification:new', serializeNotification(notification));
+  sendPushToUser(details.userId, notification).catch((error) => {
+    console.error('Push notification delivery failed:', error.message);
+  });
   return notification;
 }
 
