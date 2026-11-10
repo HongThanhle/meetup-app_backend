@@ -92,6 +92,16 @@ async function submitLocation(req, res) {
       return res.status(400).json({ error: 'Địa chỉ không hợp lệ' });
     }
 
+    const previousLocation = await Location.findOne({ groupId, userId: req.userId })
+      .select('lat lng source travelMode rawAddress');
+    const rawAddress = source === 'manual' ? address.trim() : null;
+    const locationChanged = !previousLocation
+      || previousLocation.lat !== lat
+      || previousLocation.lng !== lng
+      || previousLocation.source !== source
+      || previousLocation.travelMode !== travelMode
+      || (previousLocation.rawAddress || null) !== rawAddress;
+
     // upsert: nếu user đã gửi vị trí trước đó trong nhóm này, ghi đè thay vì tạo mới
     const location = await Location.findOneAndUpdate(
       { groupId, userId: req.userId },
@@ -100,15 +110,18 @@ async function submitLocation(req, res) {
         lng,
         source,
         travelMode,
-        rawAddress: source === 'manual' ? address.trim() : null,
+        rawAddress,
       },
       { new: true, upsert: true }
     );
 
+    const votesReset = locationChanged && !req.group.finalizedPlace?.placeId
+      ? (await Vote.deleteMany({ groupId })).deletedCount > 0
+      : false;
     await Group.updateOne({ _id: groupId }, { $unset: { suggestionCache: 1 } });
     await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'location' });
 
-    res.json(location);
+    res.json({ ...location.toObject(), votesReset });
   } catch (err) {
     console.error('Lỗi lưu vị trí:', err);
     res.status(500).json({ error: 'Lỗi server khi lưu vị trí' });

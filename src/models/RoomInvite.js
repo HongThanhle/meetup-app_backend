@@ -8,7 +8,7 @@ const roomInviteSchema = new mongoose.Schema(
     type: { type: String, enum: ['invite'], default: 'invite', required: true },
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'declined', 'expired'],
+      enum: ['pending', 'accepted', 'declined', 'expired', 'cancelled'],
       default: 'pending',
       required: true,
     },

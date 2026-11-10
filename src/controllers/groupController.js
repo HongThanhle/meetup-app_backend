@@ -3,6 +3,7 @@ const Group = require('../models/Group');
 const Location = require('../models/Location');
 const User = require('../models/User');
 const Vote = require('../models/Vote');
+const RoomInvite = require('../models/RoomInvite');
 const { isNonEmptyString } = require('../middleware/validation');
 const {
   DEFAULT_PLACE_CATEGORIES,
@@ -12,6 +13,8 @@ const {
 } = require('../services/placeCategories');
 const { MAX_GROUP_MEMBERS } = require('../config/groupLimits');
 const { emitToGroupMembers } = require('../realtime/socketServer');
+const { emitToUser } = require('../realtime/socketHub');
+const { resolveNotification } = require('../services/notificationService');
 
 // Sinh mã mời ngẫu nhiên 6 ký tự, chỉ chữ hoa + số, tránh ký tự dễ nhầm (0/O, 1/I)
 function generateInviteCode() {
@@ -327,6 +330,24 @@ async function leaveGroup(req, res) {
 
     if (remainingMembers.length === 0) {
       await emitToGroupMembers(groupId, 'group:updated', { groupId: String(groupId), reason: 'member_left' });
+      const pendingInvites = await RoomInvite.find({ groupId, status: 'pending' })
+        .select('_id fromUser toUser');
+      if (pendingInvites.length > 0) {
+        await RoomInvite.updateMany(
+          { _id: { $in: pendingInvites.map((invite) => invite._id) }, status: 'pending' },
+          { $set: { status: 'cancelled' } }
+        );
+        await Promise.all(pendingInvites.map(async (invite) => {
+          await resolveNotification({
+            userId: invite.toUser,
+            type: 'room_invite',
+            inviteId: invite._id,
+          }, 'cancelled');
+          const payload = { inviteId: String(invite._id), status: 'cancelled' };
+          emitToUser(invite.fromUser, 'room:invite_updated', payload);
+          emitToUser(invite.toUser, 'room:invite_updated', payload);
+        }));
+      }
       await Location.deleteMany({ groupId });
       await Vote.deleteMany({ groupId });
       await group.deleteOne();
